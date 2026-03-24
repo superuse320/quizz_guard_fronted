@@ -1,236 +1,104 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { hasSupabaseConfig, supabase } from './lib/supabase'
+import { useEffect, useState } from 'react'
+import { supabase } from './api/supabase'
 import './App.css'
+import LoginPage from './pages/authPages/LoginPage'
 
 function App() {
-  const [testInput, setTestInput] = useState('')
-  const [rows, setRows] = useState([])
-  const [status, setStatus] = useState('disconnected')
-  const [isLoading, setIsLoading] = useState(false)
-  const [deletingId, setDeletingId] = useState(null)
-  const [error, setError] = useState('')
-  const [lastRealtimeLag, setLastRealtimeLag] = useState(null)
-  const pendingInsertAtRef = useRef(null)
-
-  const loadRows = useCallback(async () => {
-    if (!supabase) {
-      return
-    }
-
-    const { data, error: fetchError } = await supabase
-      .from('pruebas')
-      .select('id, test, created_at')
-      .order('id', { ascending: false })
-
-    if (fetchError) {
-      setError(fetchError.message)
-      return
-    }
-
-    setRows(data ?? [])
-    setError('')
-  }, [])
+  const [session, setSession] = useState(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!hasSupabaseConfig || !supabase) {
-      return undefined
-    }
-
-    loadRows()
-
-    const channel = supabase
-      .channel('realtime-pruebas')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'pruebas' },
-        (payload) => {
-          setRows((currentRows) => {
-            if (payload.eventType === 'INSERT') {
-              if (pendingInsertAtRef.current) {
-                setLastRealtimeLag(Date.now() - pendingInsertAtRef.current)
-                pendingInsertAtRef.current = null
-              }
-              if (currentRows.some((row) => row.id === payload.new.id)) {
-                return currentRows
-              }
-              return [payload.new, ...currentRows]
-            }
-
-            if (payload.eventType === 'UPDATE') {
-              return currentRows.map((row) =>
-                row.id === payload.new.id ? payload.new : row,
-              )
-            }
-
-            if (payload.eventType === 'DELETE') {
-              return currentRows.filter((row) => row.id !== payload.old.id)
-            }
-
-            return currentRows
-          })
-        },
-      )
-      .subscribe((channelStatus) => {
-        setStatus(channelStatus)
-      })
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [loadRows])
-
-  useEffect(() => {
-    if (!hasSupabaseConfig || !supabase || status === 'SUBSCRIBED') {
-      return undefined
-    }
-
-    const intervalId = setInterval(() => {
-      loadRows()
-    }, 2500)
-
-    return () => {
-      clearInterval(intervalId)
-    }
-  }, [status, loadRows])
-
-  const handleAddTest = async (event) => {
-    event.preventDefault()
-
-    const cleanValue = testInput.trim()
-    if (!cleanValue || !supabase) {
-      return
-    }
-
-    setIsLoading(true)
-    setError('')
-    pendingInsertAtRef.current = Date.now()
-
-    const { data: insertedRow, error: insertError } = await supabase
-      .from('pruebas')
-      .insert({ test: cleanValue })
-      .select('id, test, created_at')
-      .single()
-
-    setIsLoading(false)
-
-    if (insertError) {
-      pendingInsertAtRef.current = null
-      setError(insertError.message)
-      return
-    }
-
-    setTestInput('')
-
-    if (insertedRow) {
-      setRows((currentRows) => {
-        if (currentRows.some((row) => row.id === insertedRow.id)) {
-          return currentRows
+    const getInitialSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        setSession(session)
+        if (session && window.location.hash) {
+          window.history.replaceState(null, '', window.location.pathname)
         }
-        return [insertedRow, ...currentRows]
-      })
-    }
-  }
-
-  const handleDeleteTest = async (id) => {
-    if (!supabase || deletingId !== null) {
-      return
+      } catch (error) {
+        console.error("Error al obtener sesión:", error)
+      } finally {
+        setLoading(false)
+      }
     }
 
-    setDeletingId(id)
-    setError('')
+    getInitialSession()
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      console.log("Evento de Auth:", _event)
+      setSession(session)
+      if (_event === 'SIGNED_IN' || _event === 'INITIAL_SESSION') {
+        setLoading(false)
+      }
+      if (_event === 'SIGNED_OUT') {
+        setSession(null)
+        setLoading(false)
+      }
+    })
 
-    const previousRows = rows
-    setRows((currentRows) => currentRows.filter((row) => row.id !== id))
-
-    const { error: deleteError } = await supabase
-      .from('pruebas')
-      .delete()
-      .eq('id', id)
-
-    setDeletingId(null)
-
-    if (deleteError) {
-      setRows(previousRows)
-      setError(deleteError.message)
+    return () => {
+      subscription.unsubscribe()
     }
+  }, [])
+  if (loading) {
+    return (
+      <div className="auth-wrapper">
+        <div className="auth-container" style={{ textAlign: 'center' }}>
+          <div className="loader"></div> 
+          <p>Cargando QuizGuard...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
-    <main className="app-shell">
-      <header className="header">
-        <h1>Supabase Realtime: pruebas</h1>
-        <p>
-          Inserta valores en la tabla <code>pruebas</code> y observa los cambios en
-          vivo.
-        </p>
-      </header>
-
-      {!hasSupabaseConfig ? (
-        <section className="card warning">
-          <h2>Falta configuracion</h2>
-          <p>
-            Crea un archivo <code>.env</code> usando <code>.env.example</code> y
-            coloca <code>VITE_SUPABASE_URL</code> y{' '}
-            <code>VITE_SUPABASE_ANON_KEY</code>.
-          </p>
-        </section>
+    <>
+      {!session ? (
+        <LoginPage />
       ) : (
-        <>
-          <section className="card">
-            <form onSubmit={handleAddTest} className="form-row">
-              <input
-                type="text"
-                value={testInput}
-                onChange={(event) => setTestInput(event.target.value)}
-                placeholder="Escribe un test..."
-                maxLength={140}
-              />
-              <button type="submit" disabled={isLoading || !testInput.trim()}>
-                {isLoading ? 'Guardando...' : 'Insertar'}
+        <main className="app-shell">
+          <header className="header" style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center',
+            padding: '20px',
+            background: 'white',
+            boxShadow: '0 2px 10px rgba(0,0,0,0.05)'
+          }}>
+            <h1 style={{ fontSize: '1.5rem', margin: 0 }}>QuizGuard</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+              <span style={{ fontSize: '0.9rem', color: '#666' }}>
+                {session.user.email}
+              </span>
+              <button 
+                onClick={() => supabase.auth.signOut()} 
+                className="main-submit-btn" 
+                style={{ 
+                  padding: '8px 16px', 
+                  marginTop: 0, 
+                  backgroundColor: '#dc3545',
+                  fontSize: '0.85rem' 
+                }}
+              >
+                Cerrar Sesión
               </button>
-            </form>
-
-            <div className="stats">
-              <span>
-                Estado realtime: <strong>{status}</strong>
-              </span>
-              <span>
-                Filas cargadas: <strong>{rows.length}</strong>
-              </span>
-              <span>
-                Latencia estimada: <strong>{lastRealtimeLag ?? '-'} ms</strong>
-              </span>
             </div>
-
-            {error ? <p className="error">Error: {error}</p> : null}
-          </section>
-
-          <section className="card">
-            <h2>Eventos en tabla pruebas</h2>
-            <ul className="rows-list">
-              {rows.map((row) => (
-                <li key={row.id}>
-                  <div className="row-head">
-                    <p>{row.test}</p>
-                    <button
-                      type="button"
-                      className="danger-btn"
-                      onClick={() => handleDeleteTest(row.id)}
-                      disabled={deletingId === row.id}
-                    >
-                      {deletingId === row.id ? 'Eliminando...' : 'Eliminar'}
-                    </button>
-                  </div>
-                  <small>
-                    id: {row.id} | {new Date(row.created_at).toLocaleString()}
-                  </small>
-                </li>
-              ))}
-            </ul>
-          </section>
-        </>
+          </header>
+          
+          <div style={{ padding: '40px 20px', maxWidth: '1200px', margin: '0 auto' }}>
+            <section className="auth-container" style={{ maxWidth: '100%' }}>
+              <div className="auth-header" style={{ textAlign: 'left' }}>
+                <h2>Panel Principal</h2>
+                <p>Bienvenido de nuevo. Has iniciado sesión correctamente.</p>
+              </div>
+              
+              <div style={{ marginTop: '24px', padding: '20px', border: '1px dashed #ccc', borderRadius: '12px' }}>
+                <p>Aquí aparecerán tus cuestionarios próximamente...</p>
+              </div>
+            </section>
+          </div>
+        </main>
       )}
-    </main>
+    </>
   )
 }
 
