@@ -8,7 +8,8 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     allowedHosts: [
-      'quizzia-fronted-xpmp8a-522d25-107-148-105-38.traefik.me'
+      'quizzia-fronted-xpmp8a-522d25-107-148-105-38.traefik.me',
+      'quizziia.jojlab.com'
     ],
     watch: {
       usePolling: true,

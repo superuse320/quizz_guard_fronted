@@ -3,7 +3,7 @@ import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react'
 export const quizGeneratorApi = createApi({
   reducerPath: 'quizGeneratorApi',
   baseQuery: fetchBaseQuery({
-    baseUrl: 'https://quizzia-backend-sgziwn-2de2b7-107-148-105-38.traefik.me',
+    baseUrl: 'https://backquizziia.jojlab.com',
   }),
   endpoints: (builder) => ({
     generateQuiz: builder.mutation({
