@@ -1,8 +1,10 @@
 
 import { useRef, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useDispatch, useSelector } from 'react-redux';
 import { supabase } from '../../lib/supabase';
 import { SearchIcon } from '../../assets/icons/Search';
+import { setHomeSearchQuery } from '../../redux/slices/homeUiSlice';
 
 // Colores sutiles para avatares
 const avatarColors = [
@@ -31,6 +33,8 @@ export default function DashboardHeader({ email, name, showSearch = true }) {
     const [showMenu, setShowMenu] = useState(false);
     const avatarRef = useRef(null);
     const navigate = useNavigate();
+    const dispatch = useDispatch();
+    const searchQuery = useSelector((state) => state.homeUi?.searchQuery || '');
 
     // Cerrar el menú al hacer click fuera
     useEffect(() => {
@@ -62,6 +66,8 @@ export default function DashboardHeader({ email, name, showSearch = true }) {
                                 placeholder="Buscar..."
                                 className="bg-transparent outline-none border-none text-white placeholder-gray-400 flex-1 text-sm w-full"
                                 style={{ minWidth: 0 }}
+                                value={searchQuery}
+                                onChange={(event) => dispatch(setHomeSearchQuery(event.target.value))}
                             />
                         </div>
                     </div>

@@ -17,6 +17,7 @@ import JoinQuizPage from './pages/JoinQuizPage.jsx'
 import QuizWaitingRoomPage from './pages/QuizWaitingRoomPage.jsx'
 import QuizPlayPage from './pages/QuizPlayPage.jsx'
 import QuizControlPage from './pages/QuizControlPage.jsx'
+import StrictControlPage from './pages/StrictControlPage.jsx'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -40,6 +41,7 @@ createRoot(document.getElementById('root')).render(
             <Route path="/form/:public_id/respuestas" element={<FormAnswersPage />} />
             <Route path="/form/:public_id/respuestas/:submission_id" element={<FormAnswerDetailPage />} />
             <Route path="/form/:public_id/quiz-control" element={<QuizControlPage />} />
+            <Route path="/form/:public_id/strict-control" element={<StrictControlPage />} />
           </Route>
           {/* Rutas públicas para quiz */}
           <Route path="/join-quiz" element={<JoinQuizPage />} />

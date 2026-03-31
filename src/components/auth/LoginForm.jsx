@@ -5,6 +5,7 @@ export default function LoginForm({ open, onClose }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
+  const [formError, setFormError] = useState('')
   const [isRegistering, setIsRegistering] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [showSuccessModal, setShowSuccessModal] = useState(false)
@@ -17,13 +18,45 @@ export default function LoginForm({ open, onClose }) {
     return () => window.removeEventListener('open-register', handler)
   }, [])
 
+  useEffect(() => {
+    if (!open) return undefined
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [open])
+
+  const isValidEmail = (value) => {
+    const emailValue = String(value || '').trim()
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue)
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
+    setFormError('')
+
+    if (!isValidEmail(email)) {
+      setFormError('Ingresa un correo electrónico válido.')
+      return
+    }
+
+    if (String(password || '').length < 8) {
+      setFormError('La contraseña debe tener al menos 8 caracteres.')
+      return
+    }
+
+    if (isRegistering && String(name || '').trim().length < 2) {
+      setFormError('Ingresa un nombre válido.')
+      return
+    }
 
     if (isRegistering) {
       const { error } = await registerWithEmail(email, password, name)
       if (error) {
-        alert("Error al registrar: " + error.message)
+        setFormError('Error al registrar: ' + error.message)
       } else {
         setShowSuccessModal(true)
         setEmail('')
@@ -32,14 +65,14 @@ export default function LoginForm({ open, onClose }) {
       }
     } else {
       const { error } = await loginWithEmail(email, password)
-      if (error) alert("Error al entrar: " + error.message)
+      if (error) setFormError('Error al entrar: ' + error.message)
     }
   }
 
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose} role="presentation">
+    <div className="fixed inset-0 z-200 flex items-center justify-center bg-black/50" onClick={onClose} role="presentation">
       <div className="bg-black relative rounded-xl max-w-md w-full p-6 border border-white/20 shadow-lg overflow-hidden" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Formulario de inicio de sesion">
         <div className='pointer-events-none select-none absolute top-0 left-0 w-full h-full z-0'>
           <div className='absolute left-1/2 -translate-x-1/2 -top-30 bg-white size-52 rounded-full shadow-2xl shadow-white blur-[190px] opacity-60'></div>
@@ -59,6 +92,12 @@ export default function LoginForm({ open, onClose }) {
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
+              {formError ? (
+                <div className="rounded-lg border border-rose-300/35 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+                  {formError}
+                </div>
+              ) : null}
+
               {isRegistering && (
                 <div className="flex flex-col gap-2">
                   <label className="text-xs font-semibold text-white/90">Nombre completo</label>
@@ -92,6 +131,7 @@ export default function LoginForm({ open, onClose }) {
                     placeholder="••••••••"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    minLength={8}
                     required
                     className="w-full border border-white/20 rounded-lg px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-400 pr-10"
                   />
@@ -153,7 +193,7 @@ export default function LoginForm({ open, onClose }) {
       </div>
 
       {showSuccessModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 z-210 flex items-center justify-center bg-black/50">
           <div className="bg-black relative rounded-xl max-w-md w-full p-6 border border-white/20 shadow-lg overflow-hidden">
             <div className='pointer-events-none select-none absolute top-0 left-0 w-full h-full z-0'>
               <div className='absolute left-1/2 -translate-x-1/2 -top-30 bg-white size-52 rounded-full shadow-2xl shadow-white blur-[190px] opacity-60'></div>

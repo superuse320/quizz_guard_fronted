@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 import DashboardHeader from '../components/common/DashboardHeader';
 import AiGenerateModal from '../components/common/AiGenerateModal';
+import FormCardThumbnail from '../components/common/FormCardThumbnail';
 import { useSession } from '../hooks/useSession';
 import { useProfile } from '../hooks/useProfile';
 import { useDeleteFormMutation, useGetFormsQuery } from '../redux/services/formsApi';
@@ -21,26 +23,27 @@ export default function Home() {
     skip: !userId,
   });
   const [deleteForm] = useDeleteFormMutation();
+  const searchQuery = useSelector((state) => state.homeUi?.searchQuery || '');
 
   const getFormModeMeta = (formMode) => {
     const mode = String(formMode || 'normal').toLowerCase();
     if (mode === 'quiz') {
-      return { label: 'Quiz', className: 'bg-blue-500/20 border-blue-400/40 text-blue-100' };
+      return { label: 'Quiz', className: 'bg-blue-400 text-blue-950 border-blue-200/90 shadow-lg shadow-blue-500/45' };
     }
     if (mode === 'strict') {
-      return { label: 'Examen', className: 'bg-amber-500/20 border-amber-400/40 text-amber-100' };
+      return { label: 'Examen', className: 'bg-amber-400 text-amber-950 border-amber-200/90 shadow-lg shadow-amber-500/45' };
     }
-    return { label: 'Normal', className: 'bg-emerald-500/20 border-emerald-400/40 text-emerald-100' };
+    return { label: 'Normal', className: 'bg-emerald-400 text-emerald-950 border-emerald-200/90 shadow-lg shadow-emerald-500/45' };
   };
 
   const getPublishStatusMeta = (status) => {
     const normalized = String(status || '').toLowerCase();
 
     if (normalized === 'published') {
-      return { label: 'Publicado', className: 'bg-cyan-500/20 border-cyan-400/40 text-cyan-100' };
+      return { label: 'Publicado', className: 'text-emerald-300', isPublished: true };
     }
 
-    return { label: 'Borrador', className: 'bg-slate-500/25 border-slate-300/35 text-slate-100' };
+    return { label: 'Borrador', className: 'bg-slate-500/25 border-slate-300/35 text-slate-100', isPublished: false };
   };
 
   const formatHumanDate = (value) => {
@@ -79,6 +82,30 @@ export default function Home() {
 
   const liquidGlassCardClass =
     'group relative w-full cursor-pointer overflow-hidden text-left min-h-36 px-5 pt-9 pb-4 rounded-2xl border border-white/25 bg-white/[0.08] backdrop-blur-xl supports-[backdrop-filter]:backdrop-saturate-150 shadow-[0_12px_38px_rgba(8,12,20,0.45),inset_0_1px_0_rgba(255,255,255,0.38),inset_0_-1px_0_rgba(255,255,255,0.08)] hover:-translate-y-1 hover:bg-white/[0.12] hover:border-white/35 hover:shadow-[0_20px_50px_rgba(10,14,24,0.6),inset_0_1px_0_rgba(255,255,255,0.55),inset_0_-1px_0_rgba(255,255,255,0.14)] transition-all duration-500';
+
+  const normalizeSearchValue = (value) =>
+    String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+
+  const filteredForms = forms.filter((form) => {
+    const normalizedQuery = normalizeSearchValue(searchQuery);
+    if (!normalizedQuery) return true;
+
+    const modeMeta = getFormModeMeta(form.form_mode);
+    const statusMeta = getPublishStatusMeta(form.status);
+    const searchableText = normalizeSearchValue([
+      form.title,
+      form.public_id,
+      modeMeta.label,
+      statusMeta.label,
+      formatHumanDate(form.created_at),
+    ].join(' '));
+
+    return searchableText.includes(normalizedQuery);
+  });
 
   useEffect(() => {
     if (!openMenuFormId) return;
@@ -182,16 +209,29 @@ export default function Home() {
                 <h3 className="text-2xl font-semibold text-white">Aún no has creado formularios</h3>
                 <p className="mt-2 text-sm text-gray-400">Empieza creando uno nuevo desde las opciones superiores.</p>
               </div>
+            ) : filteredForms.length === 0 ? (
+              <div className="col-span-full py-16 text-center">
+                <div className="mx-auto mb-4 h-16 w-16 rounded-2xl border border-white/15 grid place-items-center">
+                  <svg className="h-8 w-8 text-primary-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+                    <circle cx="11" cy="11" r="7" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m20 20-3.6-3.6" />
+                  </svg>
+                </div>
+                <h3 className="text-2xl font-semibold text-white">No se encontraron formularios</h3>
+                <p className="mt-2 text-sm text-gray-400">Prueba con otro término en el buscador.</p>
+              </div>
             ) : (
-              forms.map((form) => (
+              filteredForms.map((form) => (
                 (() => {
                   const modeMeta = getFormModeMeta(form.form_mode);
                   const publishMeta = getPublishStatusMeta(form.status);
                   const isQuiz = String(form.form_mode || '').toLowerCase() === 'quiz';
+                  const isStrict = String(form.form_mode || '').toLowerCase() === 'strict';
+                  const isStrictOrNormal = ['strict', 'normal'].includes(String(form.form_mode || 'normal').toLowerCase());
                   return (
                 <article
                   key={form.id}
-                  className="relative cursor-pointer overflow-visible rounded-lg border border-white/12 bg-[#151923] shadow-sm hover:shadow-xl hover:-translate-y-0.5 transition"
+                  className="relative cursor-pointer overflow-visible rounded-lg border border-white/12 bg-white/5 shadow-sm hover:shadow-xl hover:-translate-y-0.5 transition"
                   onClick={() => navigate(`/form/${form.public_id}/edit`)}
                 >
                   <button
@@ -201,28 +241,83 @@ export default function Home() {
                       navigate(`/form/${form.public_id}/edit`);
                     }}
                   >
-                    <div className="h-40 border-b border-white/8 bg-linear-to-br from-[#2a3040] via-[#20263a] to-[#1a1f2f] p-3">
-                      <div className="h-full w-full rounded bg-white/95 p-2">
-                        <div className="h-1.5 w-2/3 rounded bg-[#8f5ad9]" />
-                        <div className="mt-2 h-1.5 w-1/2 rounded bg-gray-300" />
-                        <div className="mt-2 space-y-1.5">
-                          <div className="h-1.5 w-full rounded bg-gray-200" />
-                          <div className="h-1.5 w-[92%] rounded bg-gray-200" />
-                          <div className="h-1.5 w-[88%] rounded bg-gray-200" />
-                          <div className="h-1.5 w-[90%] rounded bg-gray-200" />
-                        </div>
-                      </div>
+                    <div className="relative h-32 border-b border-white/8 px-3 pt-3 pb-2">
+                      <span className={`absolute right-5 top-4 z-10 inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${modeMeta.className}`}>
+                        {modeMeta.label}
+                      </span>
+                      <FormCardThumbnail
+                        formMode={form.form_mode}
+                        previewQuestions={form.previewQuestions || []}
+                        formTheme={form.theme}
+                        formTitle={form.title}
+                        formDescription={form.description}
+                      />
                     </div>
                   </button>
 
-                  <div className="px-4 pt-3 pb-2">
+                  <div className="px-4 pt-2 pb-2">
                     <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${modeMeta.className}`}>
-                        {modeMeta.label}
-                      </span>
-                      <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${publishMeta.className}`}>
+                      <span className={`inline-flex items-center text-[11px] font-bold uppercase tracking-wide ${publishMeta.isPublished ? 'px-0 py-0' : 'rounded-full border px-2.5 py-1'} ${publishMeta.className}`}>
+                        {publishMeta.isPublished ? <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-300" /> : null}
                         {publishMeta.label}
                       </span>
+                      {!isQuiz ? (
+                        <div className="ml-auto flex items-center gap-2">
+                          {isStrict ? (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                navigate(`/form/${form.public_id}/strict-control`);
+                              }}
+                              className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-amber-300/35 px-2.5 py-1 text-xs font-semibold text-amber-200 transition hover:bg-amber-500/10"
+                              title="Panel de control estricto"
+                            >
+                              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <rect x="3" y="3" width="7" height="7" rx="1" />
+                                <rect x="14" y="3" width="7" height="4" rx="1" />
+                                <rect x="14" y="10" width="7" height="11" rx="1" />
+                                <rect x="3" y="12" width="7" height="9" rx="1" />
+                              </svg>
+                              Dashboard
+                            </button>
+                          ) : null}
+
+                          {isStrictOrNormal ? (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                navigate(`/form/${form.public_id}/respuestas`);
+                              }}
+                              className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-blue-300/35 px-2.5 py-1 text-xs font-semibold text-blue-200 transition hover:bg-blue-500/10"
+                            >
+                              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M3 5h18" />
+                                <path d="M3 12h18" />
+                                <path d="M3 19h18" />
+                              </svg>
+                              Respuestas
+                            </button>
+                          ) : null}
+
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              window.open(`/formulario/${form.public_id}`, '_blank');
+                            }}
+                            className="inline-flex cursor-pointer h-7 w-7 items-center justify-center rounded-md border border-gray-300/35 text-gray-200 transition hover:bg-gray-500/10"
+                            aria-label="Abrir enlace publico"
+                            title="Abrir enlace publico"
+                          >
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M10 13a5 5 0 0 0 7.54.54l2.12-2.12a5 5 0 1 0-7.07-7.07L11.4 5.52" />
+                              <path d="M14 11a5 5 0 0 0-7.54-.54L4.34 12.58a5 5 0 0 0 7.07 7.07l1.17-1.17" />
+                            </svg>
+                          </button>
+                        </div>
+                      ) : null}
                       {isQuiz ? (
                         <button
                           type="button"
@@ -269,17 +364,6 @@ export default function Home() {
 
                     {openMenuFormId === form.id ? (
                       <div className="absolute right-2 top-11 z-20 w-44 rounded-lg border border-white/10 bg-[#10141d] shadow-2xl p-1">
-                        {!isQuiz ? (
-                          <>
-                            <button className="w-full text-left px-3 py-2 text-sm rounded hover:bg-white/8" onClick={(event) => { event.stopPropagation(); setOpenMenuFormId(null); navigate(`/form/${form.public_id}/respuestas`); }}>Respuestas</button>
-                            <button className="w-full text-left px-3 py-2 text-sm rounded hover:bg-white/8" onClick={(event) => { event.stopPropagation(); setOpenMenuFormId(null); navigate(`/formulario/${form.public_id}`); }}>Ver</button>
-                          </>
-                        ) : null}
-                        <button className="w-full text-left px-3 py-2 text-sm rounded hover:bg-white/8" onClick={(event) => { event.stopPropagation(); setOpenMenuFormId(null); navigate(`/form/${form.public_id}/edit`); }}>Editar</button>
-                        {!isQuiz ? (
-                          <button className="w-full text-left px-3 py-2 text-sm rounded hover:bg-white/8" onClick={(event) => { event.stopPropagation(); setOpenMenuFormId(null); window.open(`/formulario/${form.public_id}`, '_blank'); }}>Link público</button>
-                        ) : null}
-                        <div className="my-1 h-px bg-white/10" />
                         <button
                           className="w-full text-left px-3 py-2 text-sm rounded text-red-400 hover:bg-red-500/10"
                           onClick={async (event) => {

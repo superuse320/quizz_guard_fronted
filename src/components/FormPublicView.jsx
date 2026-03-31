@@ -111,11 +111,13 @@ function FormPublicView() {
   const [strictNowMs, setStrictNowMs] = useState(Date.now());
   const [strictReturnCountdown, setStrictReturnCountdown] = useState(null);
   const [strictReturnCountdownActive, setStrictReturnCountdownActive] = useState(false);
+  const [strictSessionStartedAtMs, setStrictSessionStartedAtMs] = useState(null);
   const [activeSession, setActiveSession] = useState(null);
   const [alreadySubmitted, setAlreadySubmitted] = useState(false);
   const [completedView, setCompletedView] = useState(false);
   const strictLastEventRef = useRef(0);
   const wakeLockRef = useRef(null);
+  const strictClosingRef = useRef(false);
 
   const checkUserAlreadySubmitted = async (formId, userId) => {
     if (!formId || !userId) return false;
@@ -267,22 +269,86 @@ function FormPublicView() {
     if (now - strictLastEventRef.current < 1200) return;
     strictLastEventRef.current = now;
 
-    setStrictWarningCount((current) => current + 1);
+    let nextWarningCount = strictWarningCount + 1;
+    setStrictWarningCount((current) => {
+      nextWarningCount = current + 1;
+      return nextWarningCount;
+    });
     setStrictSuspiciousEvents((current) => {
       const next = [...current, { reason, at: new Date().toISOString() }];
       if (next.length > 200) return next.slice(next.length - 200);
       return next;
     });
     setSubmitMsg('Actividad sospechosa detectada. Se registrara y se reportara al propietario del formulario.');
+
+    const severity = ['tab_hidden', 'window_blur', 'fullscreen_exit', 'return_timeout', 'beforeunload_attempt']
+      .includes(reason)
+      ? 'high'
+      : 'medium';
+
+    if (strictSubmissionId && form?.id) {
+      supabase.from('strict_exam_events').insert({
+        form_id: form.id,
+        submission_id: strictSubmissionId,
+        respondent_user_id: activeSession?.user?.id || null,
+        question_index: strictStep + 1,
+        warning_count: nextWarningCount,
+        severity,
+        reason,
+      }).then(() => {}).catch(() => {});
+    }
+  };
+
+  const upsertStrictLiveState = async (overrides = {}) => {
+    if (!strictSubmissionId || !form?.id || !activeSession?.user?.id) return;
+
+    const totalQuestions = Math.max(questions.length || 0, 1);
+    const currentQuestion = Math.min(Math.max(strictStep + 1, 1), totalQuestions);
+    const progressPercent = Math.round((currentQuestion / totalQuestions) * 100);
+    const respondentLabel =
+      activeSession?.user?.user_metadata?.full_name ||
+      activeSession?.user?.user_metadata?.name ||
+      activeSession?.user?.email ||
+      `Usuario ${activeSession.user.id.slice(0, 8)}`;
+
+    await supabase
+      .from('strict_exam_live_state')
+      .upsert(
+        {
+          submission_id: strictSubmissionId,
+          form_id: form.id,
+          respondent_user_id: activeSession.user.id,
+          respondent_label: respondentLabel,
+          current_question: currentQuestion,
+          total_questions: totalQuestions,
+          progress_percent: progressPercent,
+          seconds_remaining: strictDurationRemaining,
+          warning_count: strictWarningCount,
+          is_active: true,
+          ...overrides,
+        },
+        { onConflict: 'submission_id' },
+      )
+      .then(() => {})
+      .catch(() => {});
   };
 
   const beginStrictReturnCountdown = () => {
-    setStrictReturnCountdown((current) => (current === null ? 30 : current));
+    setStrictReturnCountdown(30);
     setStrictReturnCountdownActive(true);
   };
 
   const pauseStrictReturnCountdown = () => {
     setStrictReturnCountdownActive(false);
+  };
+
+  const handleStrictBoundaryViolation = (reason) => {
+    if (!strictStarted || strictClosingRef.current) return;
+
+    registerStrictSuspiciousEvent(reason);
+
+    setSubmitMsg('Saliste del examen. Tienes 30 segundos para regresar o el examen sera anulado.');
+    beginStrictReturnCountdown();
   };
 
   const getStrictReasonLabel = (reason) => {
@@ -400,74 +466,94 @@ function FormPublicView() {
       return;
     }
 
-    if (durationEnabled && durationMinutes > 0) {
-      if (!userSession?.user?.id) {
-        setSubmitMsg('La duracion por usuario requiere cuenta logueada.');
-        return;
-      }
+    const durationSeconds = durationEnabled && durationMinutes > 0 ? durationMinutes * 60 : null;
+    const { data: inProgressRows, error: inProgressError } = await supabase
+      .from('form_submissions')
+      .select('id, started_at')
+      .eq('form_id', form.id)
+      .eq('respondent_user_id', userSession.user.id)
+      .eq('status', 'in_progress')
+      .order('started_at', { ascending: false })
+      .limit(1);
 
-      const durationSeconds = durationMinutes * 60;
-      const { data: inProgressRows, error: inProgressError } = await supabase
-        .from('form_submissions')
-        .select('id, started_at')
-        .eq('form_id', form.id)
-        .eq('respondent_user_id', userSession.user.id)
-        .eq('status', 'in_progress')
-        .order('started_at', { ascending: false })
-        .limit(1);
-
-      if (inProgressError) {
-        setSubmitMsg('No se pudo iniciar el examen (error de sesion).');
-        return;
-      }
-
-      if (Array.isArray(inProgressRows) && inProgressRows.length > 0) {
-        const existing = inProgressRows[0];
-        const startedAt = toValidDate(existing.started_at);
-        const elapsed = startedAt ? Math.max(0, Math.floor((Date.now() - startedAt.getTime()) / 1000)) : 0;
-        const remaining = Math.max(0, durationSeconds - elapsed);
-        if (remaining <= 0) {
-          setSubmitMsg('Tu tiempo de examen ya termino para este intento.');
-          return;
-        }
-        setStrictSubmissionId(existing.id);
-        setStrictDurationRemaining(remaining);
-        setStrictDurationActive(true);
-      } else {
-        const startedAtIso = new Date().toISOString();
-        const { data: createdSubmission, error: createdError } = await supabase
-          .from('form_submissions')
-          .insert([
-            {
-              form_id: form.id,
-              respondent_user_id: userSession.user.id,
-              status: 'in_progress',
-              started_at: startedAtIso,
-              submitted_at: null,
-              warnings: strictWarningCount,
-              meta: {
-                strict_mode: true,
-                strict_duration_seconds: durationSeconds,
-              },
-            },
-          ])
-          .select('id')
-          .single();
-
-        if (createdError || !createdSubmission) {
-          setSubmitMsg('No se pudo crear el intento del examen.');
-          return;
-        }
-
-        setStrictSubmissionId(createdSubmission.id);
-        setStrictDurationRemaining(durationSeconds);
-        setStrictDurationActive(true);
-      }
-    } else {
-      setStrictSubmissionId(null);
-      setStrictDurationRemaining(null);
-      setStrictDurationActive(false);
+    if (inProgressError) {
+      setSubmitMsg('No se pudo iniciar el examen (error de sesion).');
+      return;
     }
+
+    if (Array.isArray(inProgressRows) && inProgressRows.length > 0) {
+      const staleAttempt = inProgressRows[0];
+      const nowIso = new Date().toISOString();
+      await supabase
+        .from('form_submissions')
+        .update({
+          status: 'submitted',
+          submitted_at: nowIso,
+          strict_locked: true,
+          strict_locked_reason: 'reentry_attempt_after_exit',
+          terminated_at: nowIso,
+          meta: {
+            strict_mode: true,
+            strict_end_reason: 'reentry_attempt_after_exit',
+          },
+        })
+        .eq('id', staleAttempt.id)
+        .eq('respondent_user_id', userSession.user.id);
+
+      await supabase
+        .from('strict_exam_live_state')
+        .upsert({
+          submission_id: staleAttempt.id,
+          form_id: form.id,
+          respondent_user_id: userSession.user.id,
+          respondent_label: userSession.user.email || `Usuario ${userSession.user.id.slice(0, 8)}`,
+          current_question: 1,
+          total_questions: Math.max(questions.length || 0, 1),
+          progress_percent: 0,
+          seconds_remaining: 0,
+          warning_count: strictWarningCount,
+          is_active: false,
+        }, { onConflict: 'submission_id' })
+        .then(() => {})
+        .catch(() => {});
+
+      setAlreadySubmitted(true);
+      setSubmitMsg('Tu intento fue cerrado por salir del examen. No puedes volver a entrar.');
+      return;
+    }
+
+    const startedAtIso = new Date().toISOString();
+    const { data: createdSubmission, error: createdError } = await supabase
+      .from('form_submissions')
+      .insert([
+        {
+          form_id: form.id,
+          respondent_user_id: userSession.user.id,
+          status: 'in_progress',
+          started_at: startedAtIso,
+          submitted_at: null,
+          warnings: strictWarningCount,
+          strict_total_questions: Math.max(questions.length || 0, 1),
+          strict_last_question_index: 1,
+          meta: {
+            strict_mode: true,
+            strict_duration_seconds: durationSeconds,
+          },
+        },
+      ])
+      .select('id')
+      .single();
+
+    if (createdError || !createdSubmission) {
+      setSubmitMsg('No se pudo crear el intento del examen.');
+      return;
+    }
+
+    setStrictSubmissionId(createdSubmission.id);
+    setStrictDurationRemaining(durationSeconds);
+    setStrictDurationActive(Boolean(durationSeconds));
+    setStrictSessionStartedAtMs(Date.now());
+    setStrictExitIncidents(0);
 
     setStrictStarted(true);
     setStrictStep(0);
@@ -483,11 +569,36 @@ function FormPublicView() {
 
     await requestWakeLock();
     await requestKeyboardLock();
+
+    await supabase
+      .from('strict_exam_live_state')
+      .upsert({
+        submission_id: createdSubmission.id,
+        form_id: form.id,
+        respondent_user_id: userSession.user.id,
+        respondent_label: userSession.user.email || `Usuario ${userSession.user.id.slice(0, 8)}`,
+        current_question: 1,
+        total_questions: Math.max(questions.length || 0, 1),
+        progress_percent: questions.length > 0 ? Math.round((1 / questions.length) * 100) : 0,
+        seconds_remaining: durationSeconds,
+        warning_count: strictWarningCount,
+        is_active: true,
+      }, { onConflict: 'submission_id' })
+      .then(() => {})
+      .catch(() => {});
   };
 
   // Enviar respuestas (real)
-  const handleSubmit = async () => {
-    if (submitting) return;
+  const handleSubmit = async (options = {}) => {
+    const {
+      forcedReason = null,
+      preserveProgressOnly = false,
+      markLocked = false,
+      completionMessage = '',
+    } = options;
+
+    if (submitting || strictClosingRef.current) return;
+    if (forcedReason) strictClosingRef.current = true;
 
     const { data: sessionData } = await supabase.auth.getSession();
     const userSession = sessionData?.session || null;
@@ -496,18 +607,22 @@ function FormPublicView() {
       return;
     }
 
-    const hasSubmission = await checkUserAlreadySubmitted(form.id, userSession.user.id);
-    if (hasSubmission) {
-      setAlreadySubmitted(true);
-      setSubmitMsg('Ya has respondido este formulario anteriormente.');
-      return;
+    if (!forcedReason) {
+      const hasSubmission = await checkUserAlreadySubmitted(form.id, userSession.user.id);
+      if (hasSubmission) {
+        setAlreadySubmitted(true);
+        setSubmitMsg('Ya has respondido este formulario anteriormente.');
+        return;
+      }
     }
 
     const nextErrors = {};
 
-    for (const question of questions) {
-      if (isQuestionRequired(question) && isResponseEmpty(question, responses[question.id])) {
-        nextErrors[question.id] = 'Esta pregunta es obligatoria.';
+    if (!forcedReason) {
+      for (const question of questions) {
+        if (isQuestionRequired(question) && isResponseEmpty(question, responses[question.id])) {
+          nextErrors[question.id] = 'Esta pregunta es obligatoria.';
+        }
       }
     }
 
@@ -531,10 +646,14 @@ function FormPublicView() {
             status: 'submitted',
             submitted_at: submittedAtIso,
             warnings: strictWarningCount,
+            strict_locked: Boolean(markLocked),
+            strict_locked_reason: markLocked ? forcedReason : null,
+            terminated_at: markLocked ? submittedAtIso : null,
             meta: {
               strict_mode: form?.form_mode === 'strict',
               suspicious_warnings: strictWarningCount,
               suspicious_events: strictSuspiciousEvents,
+              strict_end_reason: forcedReason || 'manual_submit',
             },
           })
           .eq('id', strictSubmissionId)
@@ -576,13 +695,20 @@ function FormPublicView() {
       }
 
       // 2. Insertar respuestas por pregunta
-      const answersPayload = questions.map(q => ({
-        submission_id: submission.id,
-        question_id: q.id,
-        answer_value: JSON.stringify(responses[q.id] ?? null),
-        // is_correct: null, // Se puede calcular después si es quiz
-        points_earned: 0,
-      }));
+      const answersPayload = questions
+        .filter((q) => (preserveProgressOnly ? !isResponseEmpty(q, responses[q.id]) : true))
+        .map(q => ({
+          submission_id: submission.id,
+          question_id: q.id,
+          answer_value: JSON.stringify(responses[q.id] ?? null),
+          points_earned: 0,
+        }));
+
+      await supabase
+        .from('form_submission_answers')
+        .delete()
+        .eq('submission_id', submission.id);
+
       const { error: ansError } = await supabase
         .from('form_submission_answers')
         .insert(answersPayload);
@@ -591,16 +717,50 @@ function FormPublicView() {
         return;
       }
 
+      await supabase
+        .from('strict_exam_live_state')
+        .upsert(
+          {
+            submission_id: submission.id,
+            form_id: form.id,
+            respondent_user_id: userSession.user.id,
+            respondent_label: userSession.user.email || `Usuario ${userSession.user.id.slice(0, 8)}`,
+            current_question: Math.min(strictStep + 1, Math.max(questions.length || 0, 1)),
+            total_questions: Math.max(questions.length || 0, 1),
+            progress_percent: questions.length > 0 ? Math.round(((Math.min(strictStep + 1, questions.length)) / questions.length) * 100) : 0,
+            seconds_remaining: strictDurationRemaining,
+            warning_count: strictWarningCount,
+            is_active: false,
+          },
+          { onConflict: 'submission_id' },
+        )
+        .then(() => {})
+        .catch(() => {});
+
+      if (forcedReason && strictSubmissionId && form?.id) {
+        await supabase.from('strict_exam_events').insert({
+          form_id: form.id,
+          submission_id: strictSubmissionId,
+          respondent_user_id: userSession.user.id,
+          question_index: strictStep + 1,
+          warning_count: strictWarningCount,
+          severity: 'high',
+          reason: forcedReason,
+        }).then(() => {}).catch(() => {});
+      }
+
       await releaseWakeLock();
       releaseKeyboardLock();
       setStrictDurationActive(false);
-      setSubmitMsg('');
+      setStrictStarted(false);
+      setSubmitMsg(forcedReason ? (completionMessage || 'Tu intento fue cerrado automaticamente.') : '');
       setAlreadySubmitted(true);
-      setCompletedView(true);
+      setCompletedView(!forcedReason);
     } catch (e) {
       setSubmitMsg('Error inesperado al enviar.');
     } finally {
       setSubmitting(false);
+      strictClosingRef.current = false;
     }
   };
 
@@ -697,6 +857,7 @@ function FormPublicView() {
     setStrictSuspiciousEvents([]);
     setStrictReturnCountdown(null);
     setStrictReturnCountdownActive(false);
+    setStrictSessionStartedAtMs(null);
     setCompletedView(false);
     setAlreadySubmitted(false);
     strictLastEventRef.current = 0;
@@ -710,26 +871,31 @@ function FormPublicView() {
 
     const onVisibilityChange = () => {
       if (document.hidden) {
-        registerStrictSuspiciousEvent('tab_hidden');
-        beginStrictReturnCountdown();
+        handleStrictBoundaryViolation('tab_hidden');
       } else {
         pauseStrictReturnCountdown();
+        setStrictReturnCountdown(null);
+        setSubmitMsg('Regresaste al examen. Continua con normalidad.');
       }
     };
 
     const onWindowBlur = () => {
-      registerStrictSuspiciousEvent('window_blur');
-      beginStrictReturnCountdown();
+      handleStrictBoundaryViolation('window_blur');
     };
 
     const onWindowFocus = () => {
-      pauseStrictReturnCountdown();
+      if (!document.hidden) {
+        pauseStrictReturnCountdown();
+        setStrictReturnCountdown(null);
+      }
     };
 
     const onFullscreenChange = () => {
       if (!document.fullscreenElement) {
-        registerStrictSuspiciousEvent('fullscreen_exit');
-        beginStrictReturnCountdown();
+        handleStrictBoundaryViolation('fullscreen_exit');
+      } else {
+        pauseStrictReturnCountdown();
+        setStrictReturnCountdown(null);
       }
     };
 
@@ -744,7 +910,7 @@ function FormPublicView() {
       window.removeEventListener('focus', onWindowFocus);
       document.removeEventListener('fullscreenchange', onFullscreenChange);
     };
-  }, [form?.form_mode, strictStarted]);
+  }, [form?.form_mode, strictStarted, strictSubmissionId]);
 
   useEffect(() => {
     const isStrictModeActive = form?.form_mode === 'strict' && strictStarted;
@@ -901,7 +1067,16 @@ function FormPublicView() {
         if (next <= 0) {
           setStrictReturnCountdownActive(false);
           registerStrictSuspiciousEvent('return_timeout');
-          setSubmitMsg('No regresaste a tiempo. Evento sospechoso adicional registrado.');
+          setSubmitMsg('No regresaste en 30 segundos. El examen sera anulado.');
+          setTimeout(() => {
+            handleSubmit({
+              forcedReason: 'return_timeout',
+              preserveProgressOnly: true,
+              markLocked: true,
+              completionMessage: 'El examen fue anulado por no regresar en 30 segundos.',
+            });
+          }, 0);
+          return null;
         }
         return next;
       });
@@ -919,9 +1094,14 @@ function FormPublicView() {
         const next = Math.max(0, current - 1);
         if (next <= 0) {
           setStrictDurationActive(false);
-          setSubmitMsg('Se agoto el tiempo del examen. Se enviara automaticamente.');
+          setSubmitMsg('Se agoto el tiempo del examen. El intento se cerrara con tu progreso actual.');
           setTimeout(() => {
-            handleSubmit();
+            handleSubmit({
+              forcedReason: 'time_expired',
+              preserveProgressOnly: true,
+              markLocked: true,
+              completionMessage: 'Tu tiempo termino. Se guardo solo tu progreso alcanzado.',
+            });
           }, 0);
         }
         return next;
@@ -940,16 +1120,67 @@ function FormPublicView() {
     return () => clearInterval(timer);
   }, [form?.form_mode]);
 
+  useEffect(() => {
+    const strictModeActive = form?.form_mode === 'strict' && strictStarted;
+    if (!strictModeActive || !strictSubmissionId) return;
+
+    upsertStrictLiveState();
+  }, [strictStarted, strictSubmissionId, strictStep, strictWarningCount, strictDurationRemaining, questions.length]);
+
+  useEffect(() => {
+    if (!strictSubmissionId || !strictStarted) return;
+
+    const channel = supabase
+      .channel(`strict_submission_${strictSubmissionId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'form_submissions',
+          filter: `id=eq.${strictSubmissionId}`,
+        },
+        (payload) => {
+          const updated = payload?.new;
+          if (!updated) return;
+
+          if (updated.status === 'submitted' && updated.strict_locked) {
+            releaseWakeLock();
+            releaseKeyboardLock();
+            setStrictStarted(false);
+            setStrictDurationActive(false);
+            setAlreadySubmitted(true);
+            setCompletedView(false);
+            setSubmitMsg('Tu intento fue cerrado por el propietario o por una regla de seguridad.');
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [strictSubmissionId, strictStarted]);
+
   if (loading) return <div className="min-h-screen flex items-center justify-center text-white bg-black">Cargando formulario...</div>;
   if (notFound) return <div className="min-h-screen flex items-center justify-center text-white bg-black">Formulario no encontrado</div>;
   if (blockedByQuizMode) return <div className="min-h-screen flex items-center justify-center text-white bg-black">Este formulario es tipo quiz y no tiene acceso por link publico.</div>;
   if (completedView) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-black px-4 text-white">
-        <section className="w-full max-w-xl rounded-2xl border border-emerald-300/30 bg-emerald-500/10 p-8 text-center backdrop-blur-sm">
-          <p className="text-xs uppercase tracking-[0.2em] text-emerald-200">Formulario completado</p>
-          <h2 className="mt-2 text-3xl font-black">Tus respuestas fueron enviadas</h2>
-          <p className="mt-3 text-sm text-emerald-100/90">Gracias por completar este formulario.</p>
+      <main className="relative min-h-screen overflow-hidden bg-black px-4 py-10 text-white">
+        <div className="pointer-events-none absolute inset-0">
+          <div className="absolute -left-24 top-16 h-72 w-72 rounded-full bg-emerald-500/15 blur-3xl" />
+          <div className="absolute -right-24 bottom-8 h-72 w-72 rounded-full bg-teal-500/15 blur-3xl" />
+        </div>
+        <section className="relative mx-auto flex min-h-[70vh] w-full max-w-3xl items-center justify-center">
+          <div className="text-center">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-200/90">Formulario completado</p>
+            <h1 className="mt-4 text-3xl font-black leading-tight text-white sm:text-5xl">{form?.title || 'Formulario'}</h1>
+            <div className="mx-auto mt-6 h-px w-28 bg-emerald-300/50" />
+            <p className="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-slate-200/90 sm:text-lg">
+              Tus respuestas fueron enviadas correctamente. Gracias por completar el formulario.
+            </p>
+          </div>
         </section>
       </main>
     );
@@ -957,11 +1188,22 @@ function FormPublicView() {
 
   if (alreadySubmitted) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-black px-4 text-white">
-        <section className="w-full max-w-xl rounded-2xl border border-amber-300/30 bg-amber-500/10 p-8 text-center backdrop-blur-sm">
-          <p className="text-xs uppercase tracking-[0.2em] text-amber-200">Formulario ya respondido</p>
-          <h2 className="mt-2 text-3xl font-black">Ya enviaste este formulario</h2>
-          <p className="mt-3 text-sm text-amber-100/90">Solo se permite una respuesta por usuario logueado.</p>
+      <main className="relative min-h-screen overflow-hidden bg-black px-4 py-10 text-white">
+        <div className="pointer-events-none absolute inset-0">
+          <div className="absolute -left-24 top-10 h-72 w-72 rounded-full bg-amber-500/15 blur-3xl" />
+          <div className="absolute -right-20 bottom-0 h-72 w-72 rounded-full bg-orange-500/15 blur-3xl" />
+        </div>
+        <section className="relative mx-auto flex min-h-[70vh] w-full max-w-3xl items-center justify-center">
+          <div className="text-center">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-200/90">Formulario ya respondido</p>
+            <h1 className="mt-4 text-3xl font-black leading-tight text-white sm:text-5xl">{form?.title || 'Formulario'}</h1>
+            <div className="mx-auto mt-6 h-px w-28 bg-amber-300/50" />
+            <p className="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-slate-200/90 sm:text-lg">
+              {form?.form_mode === 'strict'
+                ? 'Este examen permite un solo intento. Si sales de la pagina, el intento se cierra y no puedes volver a entrar.'
+                : 'Tu cuenta ya registro una respuesta para este formulario. Solo se permite un envio por usuario.'}
+            </p>
+          </div>
         </section>
       </main>
     );
@@ -1001,6 +1243,9 @@ function FormPublicView() {
   const strictQuestion = strictQuestionCount > 0 ? questions[safeStrictStep] : null;
   const strictSection = sections.find((section) => section.id === strictQuestion?.section_id) || null;
   const strictProgress = strictQuestionCount > 0 ? Math.round(((safeStrictStep + 1) / strictQuestionCount) * 100) : 0;
+  const strictElapsedSeconds = strictSessionStartedAtMs
+    ? Math.max(0, Math.floor((strictNowMs - strictSessionStartedAtMs) / 1000))
+    : 0;
 
   const sectionsToRender = strictSessionActive
     ? [{
@@ -1037,8 +1282,17 @@ function FormPublicView() {
         <div className="absolute -right-24 top-1/3 h-80 w-80 rounded-full" style={{backgroundColor: formTheme.accent, opacity: 0.12, filter: 'blur(48px)'}} />
         <div className="absolute bottom-0 left-1/3 h-64 w-64 rounded-full" style={{backgroundColor: formTheme.surface, opacity: 0.12, filter: 'blur(48px)'}} />
       </div>
+
+      {strictSessionActive ? (
+        <div className="fixed right-4 top-4 z-40 w-56 border border-sky-300/35 bg-[#071022]/90 px-4 py-3 text-sky-100 shadow-2xl backdrop-blur">
+          <p className="text-[10px] uppercase tracking-[0.16em] text-sky-200/85">Cronometro de examen</p>
+          <p className="mt-1 text-2xl font-black leading-none">{strictDurationRemaining !== null ? formatSeconds(strictDurationRemaining) : '--:--'}</p>
+          <p className="mt-1 text-[11px] text-sky-200/85">Transcurrido: {formatSeconds(strictElapsedSeconds)}</p>
+        </div>
+      ) : null}
+
       <div className={strictSessionActive ? 'mx-auto min-h-screen w-full max-w-6xl py-6 px-4' : 'max-w-3xl mx-auto py-10 px-4'}>
-          {formTheme.coverImage ? (
+          {formTheme.coverImage && !strictSessionActive ? (
             <div className="mb-6 overflow-hidden rounded-xl shadow-lg shadow-black/40" style={{ border: `1px solid ${panelBorder}` }}>
               <img src={formTheme.coverImage} alt="Portada del formulario" className="h-52 w-full object-cover" />
             </div>
@@ -1050,7 +1304,7 @@ function FormPublicView() {
             <p className="text-base leading-relaxed" style={{ color: textSecondary }}>{form.description}</p>
           </div>
         {isStrictMode && !strictStarted ? (
-          <section className="mb-8 rounded-2xl p-6 shadow-xl shadow-black/35 backdrop-blur-sm" style={{ border: `1px solid ${hexToRgba('#f43f5e', 0.35)}`, backgroundColor: panelBg }}>
+          <section className="mb-7 px-1 py-2">
             <h2 className="text-xl font-bold text-rose-300">Modo estricto</h2>
             {strictWindowStatus === 'not_started' ? (
               <div className="mt-3 rounded-lg border border-amber-400/35 bg-amber-500/15 px-3 py-2 text-sm font-semibold text-amber-200">
@@ -1067,9 +1321,17 @@ function FormPublicView() {
                 Este examen ya finalizo.
               </div>
             ) : null}
-            <p className="mt-3 text-sm" style={{ color: textSecondary }}>Asegurate de no salir de esta pestana durante el examen.</p>
-            <p className="mt-2 text-sm" style={{ color: textSecondary }}>Cualquier actividad sospechosa se detectara y se mandara al propietario del formulario.</p>
-            <p className="mt-2 text-sm" style={{ color: textSecondary }}>Al comenzar, se intentara activar pantalla completa.</p>
+            <div className="mt-3 border-l-2 border-amber-300/50 bg-amber-500/8 p-3">
+              <p className="text-sm font-semibold text-amber-200">Recomendaciones del examen</p>
+              <ul className="mt-2 space-y-1 text-sm" style={{ color: textSecondary }}>
+                <li>- Solo puedes responder una sola vez.</li>
+                <li>- Si sales de esta pagina tienes 30 segundos para volver.</li>
+                <li>- Tienes maximo 5 incidentes; al superar el limite el examen se anula.</li>
+                <li>- Si no regresas en 30 segundos, el examen se anula y no podras volver a entrar.</li>
+                <li>- Toda actividad sospechosa se reporta en tiempo real al propietario.</li>
+                <li>- Debes estar logueado para rendir este examen.</li>
+              </ul>
+            </div>
             {strictDurationEnabled ? (
               <p className="mt-2 text-sm font-semibold text-amber-200">Duracion por usuario: {strictDurationMinutes} min (por cuenta logueada).</p>
             ) : null}
@@ -1082,7 +1344,7 @@ function FormPublicView() {
               type="button"
               onClick={startStrictSession}
               disabled={!strictCanStartNow}
-              className="mt-5 rounded-xl px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+              className="mt-5 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
               style={{backgroundImage: `linear-gradient(90deg, ${formTheme.primary}, ${formTheme.accent})`}}
             >
               {strictWindowStatus === 'not_started' ? 'Aun no disponible' : strictWindowStatus === 'finished' ? 'Examen finalizado' : 'Iniciar examen'}
@@ -1091,7 +1353,7 @@ function FormPublicView() {
         ) : null}
 
         {strictSessionActive ? (
-          <div className="mb-4 rounded-xl p-4 shadow-lg shadow-black/30 backdrop-blur-sm" style={{ border: `1px solid ${panelBorder}`, backgroundColor: panelBg }}>
+          <div className="mb-4 py-2">
             <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide" style={{ color: textSecondary }}>
               <span>Modo estricto</span>
               <span>{safeStrictStep + 1} / {strictQuestionCount || 1}</span>
@@ -1122,27 +1384,13 @@ function FormPublicView() {
             </div>
 
             {strictReturnCountdown !== null ? (
-              <div className="mt-3 rounded-lg border border-amber-400/35 bg-amber-500/15 px-3 py-2 text-sm font-semibold text-amber-200">
-                {strictReturnCountdownActive
-                  ? `Tienes ${strictReturnCountdown}s para volver a esta pantalla.`
-                  : `Temporizador en pausa: ${strictReturnCountdown}s restantes.`}
+              <div className="mt-3 rounded-lg border border-rose-500/60 bg-rose-900/40 px-3 py-3 text-sm font-semibold text-rose-100">
+                <p className="text-xs uppercase tracking-wide text-rose-200">Advertencia de salida</p>
+                <p className="mt-1 text-base font-bold text-rose-100">
+                  Regresa al examen en <span className="text-xl text-rose-300">{strictReturnCountdown}s</span> o sera anulado automaticamente.
+                </p>
               </div>
             ) : null}
-
-            <div className="mt-3 rounded-lg border border-rose-400/35 p-3" style={{ backgroundColor: inputBg }}>
-              <p className="text-xs font-semibold uppercase tracking-wide text-rose-300">Logs de actividad sospechosa</p>
-              {strictSuspiciousEvents.length === 0 ? (
-                <p className="mt-2 text-xs" style={{ color: textMuted }}>Sin eventos detectados.</p>
-              ) : (
-                <ul className="mt-2 max-h-40 space-y-1 overflow-auto text-xs" style={{ color: textSecondary }}>
-                  {[...strictSuspiciousEvents].slice(-8).reverse().map((event, index) => (
-                    <li key={`${event.at}-${event.reason}-${index}`} className="rounded border border-rose-400/30 bg-rose-500/10 px-2 py-1">
-                      [!] {new Date(event.at).toLocaleTimeString()} - {getStrictReasonLabel(event.reason)}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
           </div>
         ) : null}
 

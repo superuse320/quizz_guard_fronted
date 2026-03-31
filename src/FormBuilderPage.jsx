@@ -233,12 +233,11 @@ function FormBuilderPage(props) {
   const [formTitle, setFormTitle] = useState('')
   const [formDescription, setFormDescription] = useState('')
   const [formMode, setFormMode] = useState('normal')
-  const [strictDurationEnabled, setStrictDurationEnabled] = useState(false)
+  const [strictDurationEnabled, setStrictDurationEnabled] = useState(true)
   const [strictDurationMinutes, setStrictDurationMinutes] = useState('60')
   const [strictWindowEnabled, setStrictWindowEnabled] = useState(false)
   const [strictStartsAt, setStrictStartsAt] = useState('')
   const [strictEndsAt, setStrictEndsAt] = useState('')
-  const [strictRequireAuth, setStrictRequireAuth] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveIntent, setSaveIntent] = useState('draft')
   const [formStatus, setFormStatus] = useState('draft')
@@ -356,16 +355,20 @@ function FormBuilderPage(props) {
         setFormMode(formData.form_mode || 'normal');
         setJoinCode(formData.join_code || '');
         const formSettings = parseSettingsValue(formData.settings)
-        setStrictDurationEnabled(Boolean(formSettings.strict_duration_enabled))
+        const durationEnabledFromSettings = Boolean(formSettings.strict_duration_enabled)
+        const windowEnabledFromSettings = Boolean(formSettings.strict_window_enabled)
+        const isStrictMode = (formData.form_mode || 'normal') === 'strict'
+        const defaultDurationForStrict = isStrictMode && !durationEnabledFromSettings && !windowEnabledFromSettings
+        // Regla de negocio: en estricto solo puede estar activa una modalidad de tiempo.
+        setStrictDurationEnabled(defaultDurationForStrict ? true : durationEnabledFromSettings)
         setStrictDurationMinutes(
           Number.isFinite(Number(formSettings.strict_duration_minutes))
             ? String(Math.max(1, Number(formSettings.strict_duration_minutes)))
             : '60',
         )
-        setStrictWindowEnabled(Boolean(formSettings.strict_window_enabled))
+        setStrictWindowEnabled(defaultDurationForStrict ? false : (durationEnabledFromSettings ? false : windowEnabledFromSettings))
         setStrictStartsAt(toDateTimeInputValue(formSettings.strict_starts_at || formData.opened_at))
         setStrictEndsAt(toDateTimeInputValue(formSettings.strict_ends_at || formData.closed_at))
-        setStrictRequireAuth(formSettings.strict_require_auth !== false)
         setFormTheme((current) => {
           const parsedTheme = parseThemeValue(formData.theme)
           const coverImage = parsedTheme.coverImage || formData.cover_image_url || ''
@@ -1060,7 +1063,12 @@ function FormBuilderPage(props) {
 
     setFormTitle(normalized.title || '')
     setFormDescription(normalized.description || '')
-    setFormMode(normalized.formMode || 'normal')
+    const nextMode = normalized.formMode || 'normal'
+    setFormMode(nextMode)
+    if (nextMode === 'strict') {
+      setStrictDurationEnabled(true)
+      setStrictWindowEnabled(false)
+    }
     if (!preserveTheme) {
       setFormTheme(normalized.theme || DEFAULT_FORM_THEME)
     }
@@ -1518,13 +1526,20 @@ function FormBuilderPage(props) {
       let formId = null
       let currentPublicId = public_id
       const normalizedDurationMinutes = Math.max(1, Number(strictDurationMinutes) || 60)
+      const strictTimingMode = strictWindowEnabled ? 'global_window' : 'per_user_duration'
+      const effectiveDurationEnabled = formMode === 'strict'
+        ? strictTimingMode === 'per_user_duration'
+        : Boolean(strictDurationEnabled)
+      const effectiveWindowEnabled = formMode === 'strict'
+        ? strictTimingMode === 'global_window'
+        : Boolean(strictWindowEnabled)
       const strictSettings = {
-        strict_duration_enabled: Boolean(strictDurationEnabled),
+        strict_duration_enabled: effectiveDurationEnabled,
         strict_duration_minutes: normalizedDurationMinutes,
-        strict_window_enabled: Boolean(strictWindowEnabled),
-        strict_starts_at: strictWindowEnabled ? toIsoDateTimeOrNull(strictStartsAt) : null,
-        strict_ends_at: strictWindowEnabled ? toIsoDateTimeOrNull(strictEndsAt) : null,
-        strict_require_auth: formMode === 'strict' ? (strictDurationEnabled ? true : Boolean(strictRequireAuth)) : false,
+        strict_window_enabled: effectiveWindowEnabled,
+        strict_starts_at: effectiveWindowEnabled ? toIsoDateTimeOrNull(strictStartsAt) : null,
+        strict_ends_at: effectiveWindowEnabled ? toIsoDateTimeOrNull(strictEndsAt) : null,
+        strict_require_auth: formMode === 'strict',
       }
 
       const formData = {
@@ -1533,9 +1548,9 @@ function FormBuilderPage(props) {
         status: nextStatus,
         form_mode: formMode,
         is_quiz: formMode === 'quiz',
-        requires_auth: formMode === 'strict' ? (strictDurationEnabled ? true : Boolean(strictRequireAuth)) : false,
-        opened_at: strictWindowEnabled ? toIsoDateTimeOrNull(strictStartsAt) : null,
-        closed_at: strictWindowEnabled ? toIsoDateTimeOrNull(strictEndsAt) : null,
+        requires_auth: formMode === 'strict',
+        opened_at: effectiveWindowEnabled ? toIsoDateTimeOrNull(strictStartsAt) : null,
+        closed_at: effectiveWindowEnabled ? toIsoDateTimeOrNull(strictEndsAt) : null,
         settings: strictSettings,
         theme: formTheme,
         cover_image_url: formTheme.coverImage || null,
@@ -2137,11 +2152,7 @@ function FormBuilderPage(props) {
               </div>
             </div>
 
-            {formMode === 'strict' || formMode === 'quiz' ? (
-              <p className="mt-4 rounded-lg border border-white/15 bg-black/70 px-3 py-2 text-xs text-slate-300">
-                Los controles de este modo se muestran en un panel flotante abajo a la derecha.
-              </p>
-            ) : null}
+     
 
     
           </article>
@@ -2156,7 +2167,13 @@ function FormBuilderPage(props) {
                   <button
                     key={mode.value}
                     type="button"
-                    onClick={() => setFormMode(mode.value)}
+                    onClick={() => {
+                      setFormMode(mode.value)
+                      if (mode.value === 'strict' && !strictDurationEnabled && !strictWindowEnabled) {
+                        setStrictDurationEnabled(true)
+                        setStrictWindowEnabled(false)
+                      }
+                    }}
                     className={`cursor-pointer rounded-xl border px-3 py-2 text-sm font-semibold transition ${isActiveMode
                       ? 'border-primary-300/35 bg-linear-to-r from-primary-600 to-primary-600 text-white shadow-[0_8px_22px_rgba(79,70,229,0.35)]'
                       : 'border-white/20 bg-black text-slate-300 hover:bg-[#1a2336]'
@@ -2994,7 +3011,7 @@ function FormBuilderPage(props) {
       ) : null}
 
       {!isPreviewOpen && (formMode === 'quiz' || formMode === 'strict') ? (
-        <aside className="fixed bottom-5 left-5 right-5 z-40 rounded-2xl border border-white/15 bg-[#091225]/92 p-4 shadow-[0_18px_48px_rgba(2,6,23,0.65)] backdrop-blur-xl lg:left-auto lg:right-5 lg:w-[21rem]">
+        <aside className="fixed bottom-5 left-5 right-5 z-40 rounded-2xl border border-white/15 bg-white/5 p-4 shadow-[0_18px_48px_rgba(2,6,23,0.65)] backdrop-blur-xl lg:left-auto lg:right-5 lg:w-[21rem]">
           {formMode === 'quiz' ? (
             <>
               <div className="mb-3 flex items-center justify-between gap-2">
@@ -3059,18 +3076,43 @@ function FormBuilderPage(props) {
                 </span>
               </div>
 
-              <label className="flex items-center gap-2 text-sm text-slate-200">
-                <input
-                  type="checkbox"
-                  checked={strictDurationEnabled}
-                  onChange={(event) => setStrictDurationEnabled(event.target.checked)}
-                />
-                Duración por usuario
-              </label>
+
+              <div className="mt-2 rounded-xl border border-white/20 bg-black/40 p-1">
+                <div className="grid grid-cols-2 gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStrictDurationEnabled(true)
+                      setStrictWindowEnabled(false)
+                      setStrictStartsAt('')
+                      setStrictEndsAt('')
+                    }}
+                    className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${strictDurationEnabled
+                      ? 'bg-primary-500 text-black'
+                      : 'bg-transparent text-slate-300 hover:bg-white/10'
+                      }`}
+                  >
+                    Tiempo individual
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStrictDurationEnabled(false)
+                      setStrictWindowEnabled(true)
+                    }}
+                    className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${strictWindowEnabled
+                      ? 'bg-primary-500 text-black'
+                      : 'bg-transparent text-slate-300 hover:bg-white/10'
+                      }`}
+                  >
+                    Horario global
+                  </button>
+                </div>
+              </div>
 
               {strictDurationEnabled ? (
                 <label className="mt-2 block text-sm text-slate-200">
-                  Duración (minutos)
+                  Minutos
                   <input
                     type="number"
                     min="1"
@@ -3078,18 +3120,13 @@ function FormBuilderPage(props) {
                     onChange={(event) => setStrictDurationMinutes(event.target.value)}
                     className="mt-1 w-full rounded-lg border border-white/20 bg-black px-3 py-2 text-slate-100 outline-none focus:border-amber-300 focus:ring-2 focus:ring-amber-300/20"
                   />
-                  <span className="mt-1 block text-xs text-slate-400">Requiere cuenta logueada.</span>
+                  <span className="mt-1 block text-xs text-slate-400">Tiempo por intento.</span>
                 </label>
               ) : null}
 
-              <label className="mt-3 flex items-center gap-2 text-sm text-slate-200">
-                <input
-                  type="checkbox"
-                  checked={strictWindowEnabled}
-                  onChange={(event) => setStrictWindowEnabled(event.target.checked)}
-                />
-                Ventana global inicio/fin
-              </label>
+              <p className="mt-2 text-xs text-slate-400">
+                Modo activo: {strictDurationEnabled ? 'Tiempo individual por usuario' : 'Horario global para todos'}.
+              </p>
 
               {strictWindowEnabled ? (
                 <div className="mt-2 grid gap-2">
@@ -3114,15 +3151,18 @@ function FormBuilderPage(props) {
                 </div>
               ) : null}
 
-              <label className="mt-3 flex items-center gap-2 text-sm text-slate-200">
-                <input
-                  type="checkbox"
-                  checked={strictRequireAuth}
-                  onChange={(event) => setStrictRequireAuth(event.target.checked)}
-                  disabled={strictDurationEnabled}
-                />
-                Requerir login para responder
-              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!controlPanelPublicId) return
+                  navigate(`/form/${controlPanelPublicId}/strict-control`)
+                }}
+                disabled={!controlPanelPublicId}
+                className="mt-3 w-full rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:bg-slate-600"
+              >
+                Abrir monitor en tiempo real
+              </button>
+
             </>
           ) : null}
         </aside>
