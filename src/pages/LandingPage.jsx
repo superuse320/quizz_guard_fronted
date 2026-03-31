@@ -38,7 +38,9 @@ export default function LandingPage() {
                 />
 
                 <div className='flex-1 flex min-h-screen flex-col items-center justify-center'>
-                    <p className="text-sm mb-16 animate-subtitle">
+                 <div className='fixed flex flex-col items-center '>
+
+                    <p className="text-sm mb-16 animate-subtitle ">
                         <GenerateAiIcon className={"size-4 inline-block mr-1"} />
                         Crea quizzes, formularios y exámenes en segundos
                     </p>
@@ -67,6 +69,7 @@ export default function LandingPage() {
                             Empezar ahora
                         </span>
                     </button>
+                 </div>
 
                 </div>
                 <Footer />
