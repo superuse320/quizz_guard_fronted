@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { hasSupabaseConfig, supabase } from '../../Api/supabase'
+import { hasSupabaseConfig, supabase } from '../../lib/supabase'
 import './testRealtime.css'
 function TestRealtime() {
   const [testInput, setTestInput] = useState('')
