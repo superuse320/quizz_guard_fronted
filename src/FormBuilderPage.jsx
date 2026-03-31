@@ -2,12 +2,12 @@ import { useMemo, useState, useEffect } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { supabase } from './lib/supabase'
 import { v4 as uuidv4 } from 'uuid'
-import QuizAdminPanel from './components/QuizAdminPanel'
 import FormBuilderHeader from './components/FormBuilderHeader'
 import AiPromptSidebar from './components/AiPromptSidebar'
 import { getPreviewComponent, getRespondentComponent } from './components/QuestionTypes/index.jsx'
 import { loadFormTemplate, importFormFromFile, normalizeFormPayload } from './utils/formTemplateLoader'
 import { useGenerateQuizMutation } from './redux/services/quizGeneratorApi'
+import { useUpsertFormMutation } from './redux/services/formsApi'
 import { CloseIcon } from './assets/icons/CloseIcon.jsx'
 import { DuplicateIcon } from './assets/icons/DuplicateIcon.jsx'
 import { TrashIcon } from './assets/icons/TrashIcon.jsx'
@@ -245,6 +245,8 @@ function FormBuilderPage(props) {
   const [currentPublicId, setCurrentPublicId] = useState('')
   const [saveError, setSaveError] = useState(null)
   const [successToast, setSuccessToast] = useState('')
+  const [publishResult, setPublishResult] = useState(null)
+  const [publishOverlayStep, setPublishOverlayStep] = useState(0)
   const [session, setSession] = useState(props.session || null)
   const [checkingSession, setCheckingSession] = useState(!props.session)
   const [loadingForm, setLoadingForm] = useState(false)
@@ -253,11 +255,9 @@ function FormBuilderPage(props) {
   const location = useLocation()
   const { public_id } = useParams();
   const editMode = props.editMode !== undefined ? props.editMode : !!public_id;
+  const controlPanelPublicId = public_id || currentPublicId
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [joinCode, setJoinCode] = useState('');
-  const [showQuizPanel, setShowQuizPanel] = useState(false);
-  const [creatingQuizSession, setCreatingQuizSession] = useState(false);
-  const [formUUID, setFormUUID] = useState(null);
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiGenerationError, setAiGenerationError] = useState('')
   const [isAiSidebarOpen, setIsAiSidebarOpen] = useState(true)
@@ -269,6 +269,7 @@ function FormBuilderPage(props) {
   const [openQuestionSettings, setOpenQuestionSettings] = useState({})
   const [uploadingCover, setUploadingCover] = useState(false)
   const [generateQuiz, { isLoading: isGeneratingWithAi }] = useGenerateQuizMutation()
+  const [upsertForm] = useUpsertFormMutation()
 
   // Si no recibimos session por props, la obtenemos de Supabase
   useEffect(() => {
@@ -283,9 +284,18 @@ function FormBuilderPage(props) {
 
   useEffect(() => {
     const incomingToast = location.state?.successToast
-    if (!incomingToast) return
+    const incomingPublishResult = location.state?.publishResult || null
 
-    setSuccessToast(incomingToast)
+    if (!incomingToast && !incomingPublishResult) return
+
+    if (incomingToast) {
+      setSuccessToast(incomingToast)
+    }
+
+    if (incomingPublishResult) {
+      setPublishResult(incomingPublishResult)
+    }
+
     navigate(location.pathname, { replace: true, state: null })
   }, [location.pathname, location.state, navigate])
 
@@ -294,6 +304,19 @@ function FormBuilderPage(props) {
     const timeoutId = setTimeout(() => setSuccessToast(''), 3200)
     return () => clearTimeout(timeoutId)
   }, [successToast])
+
+  useEffect(() => {
+    if (!(saving && saveIntent === 'published')) {
+      setPublishOverlayStep(0)
+      return
+    }
+
+    const intervalId = setInterval(() => {
+      setPublishOverlayStep((prev) => (prev + 1) % 4)
+    }, 1300)
+
+    return () => clearInterval(intervalId)
+  }, [saving, saveIntent])
 
   useEffect(() => {
     if (!showAddQuestionModal && !showCustomThemeModal && !showCoverPickerModal) return
@@ -332,7 +355,6 @@ function FormBuilderPage(props) {
         setCurrentPublicId(formData.public_id || public_id || '')
         setFormMode(formData.form_mode || 'normal');
         setJoinCode(formData.join_code || '');
-        setFormUUID(formData.id);
         const formSettings = parseSettingsValue(formData.settings)
         setStrictDurationEnabled(Boolean(formSettings.strict_duration_enabled))
         setStrictDurationMinutes(
@@ -926,7 +948,7 @@ function FormBuilderPage(props) {
       paragraph: 'border-slate-300/35 bg-slate-500/16 text-slate-100',
       multiple_choice: 'border-blue-300/35 bg-blue-500/18 text-blue-100',
       checkboxes: 'border-emerald-300/35 bg-emerald-500/18 text-emerald-100',
-      choice_unique: 'border-cyan-300/35 bg-cyan-500/18 text-cyan-100',
+      choice_unique: 'border-primary-300/35 bg-primary-500/18 text-primary-100',
       dropdown: 'border-primary-300/35 bg-primary-500/18 text-primary-100',
       linear_scale: 'border-amber-300/35 bg-amber-500/18 text-amber-100',
       emoji_scale: 'border-yellow-300/35 bg-yellow-500/18 text-yellow-100',
@@ -949,7 +971,7 @@ function FormBuilderPage(props) {
       paragraph: 'border-slate-300/25 bg-slate-500/12 text-slate-100 hover:bg-slate-500/20',
       multiple_choice: 'border-blue-300/25 bg-blue-500/12 text-blue-100 hover:bg-blue-500/20',
       checkboxes: 'border-emerald-300/25 bg-emerald-500/12 text-emerald-100 hover:bg-emerald-500/20',
-      choice_unique: 'border-cyan-300/25 bg-cyan-500/12 text-cyan-100 hover:bg-cyan-500/20',
+      choice_unique: 'border-primary-300/25 bg-primary-500/12 text-primary-100 hover:bg-primary-500/20',
       dropdown: 'border-primary-300/25 bg-primary-500/12 text-primary-100 hover:bg-primary-500/20',
       linear_scale: 'border-amber-300/25 bg-amber-500/12 text-amber-100 hover:bg-amber-500/20',
       emoji_scale: 'border-yellow-300/25 bg-yellow-500/12 text-yellow-100 hover:bg-yellow-500/20',
@@ -1320,7 +1342,7 @@ function FormBuilderPage(props) {
     if (question.type === 'dropdown') {
       return (
         <select
-          className="w-full rounded-lg border border-white/20 bg-[#111827] px-3 py-2 text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
+          className="w-full rounded-lg border border-white/20 bg-black px-3 py-2 text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
           value={responses[question.id] ?? ''}
           onChange={(event) => updateResponse(question.id, Number(event.target.value))}
         >
@@ -1520,34 +1542,17 @@ function FormBuilderPage(props) {
         join_code: formMode === 'quiz' && !joinCode ? generateQuizCode() : (formMode === 'quiz' ? joinCode : null),
       }
 
-      if (editMode && public_id) {
-        const { data: formRow, error: formErr } = await supabase
-          .from('forms')
-          .update(formData)
-          .eq('public_id', public_id)
-          .select('id,public_id,join_code,status')
-          .single()
-        if (formErr) throw formErr
-        formId = formRow.id
-        currentPublicId = formRow.public_id
-        if (formRow.join_code) setJoinCode(formRow.join_code)
-        setFormUUID(formRow.id)
-        setFormStatus(formRow.status || nextStatus)
-        setCurrentPublicId(formRow.public_id || '')
-      } else {
-        const { data, error } = await supabase
-          .from('forms')
-          .insert([formData])
-          .select('id,public_id,join_code,status')
-          .single()
-        if (error) throw error
-        formId = data.id
-        currentPublicId = data.public_id
-        if (data.join_code) setJoinCode(data.join_code)
-        setFormUUID(data.id)
-        setFormStatus(data.status || nextStatus)
-        setCurrentPublicId(data.public_id || '')
-      }
+      const formRow = await upsertForm({
+        editMode: editMode && Boolean(public_id),
+        publicId: public_id,
+        formData,
+      }).unwrap()
+
+      formId = formRow.id
+      currentPublicId = formRow.public_id
+      if (formRow.join_code) setJoinCode(formRow.join_code)
+      setFormStatus(formRow.status || nextStatus)
+      setCurrentPublicId(formRow.public_id || '')
 
       if (formId) {
         if (editMode && public_id) {
@@ -1618,10 +1623,23 @@ function FormBuilderPage(props) {
         ? 'Formulario publicado con exito.'
         : 'Borrador guardado con exito.'
 
+      const generatedPublicUrl = formMode === 'quiz'
+        ? ''
+        : `${window.location.origin}/formulario/${currentPublicId}`
+
       // Replace evita que "atras" vuelva a /form despues de guardar.
       navigate(`/form/${currentPublicId}/edit`, {
         replace: true,
-        state: { successToast: successMessage },
+        state: {
+          successToast: successMessage,
+          publishResult: nextStatus === 'published'
+            ? {
+                url: generatedPublicUrl,
+                publicId: currentPublicId,
+                title: formTitle,
+              }
+            : null,
+        },
       })
     } catch (err) {
       console.error('Error inesperado al guardar:', err)
@@ -1643,7 +1661,7 @@ function FormBuilderPage(props) {
       ) : null}
       <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
         <div className="absolute -left-20 top-16 h-72 w-72 rounded-full bg-primary-500/20 blur-3xl" />
-        <div className="absolute -right-24 top-1/3 h-80 w-80 rounded-full bg-cyan-500/15 blur-3xl" />
+        <div className="absolute -right-24 top-1/3 h-80 w-80 rounded-full bg-primary-500/15 blur-3xl" />
         <div className="absolute bottom-0 left-1/3 h-64 w-64 rounded-full bg-fuchsia-500/15 blur-3xl" />
       </div>
 
@@ -1691,7 +1709,7 @@ function FormBuilderPage(props) {
         checkingSession={checkingSession}
         saveIntent={saveIntent}
         formStatus={formStatus}
-        publicFormUrl={currentPublicId ? `${window.location.origin}/form/${currentPublicId}` : ''}
+        publicFormUrl={currentPublicId && formMode !== 'quiz' ? `${window.location.origin}/formulario/${currentPublicId}` : ''}
         persistForm={persistForm}
         saveError={saveError}
         onLoadTemplate={handleLoadTemplate}
@@ -1702,6 +1720,84 @@ function FormBuilderPage(props) {
       {successToast ? (
         <div className="fixed right-5 top-20 z-50 max-w-sm rounded-xl border border-emerald-200 bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-lg">
           {successToast}
+        </div>
+      ) : null}
+
+      {saving && saveIntent === 'published' ? (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 backdrop-blur-md">
+          <div className="text-center px-6">
+            <div className="mx-auto mb-5 h-14 w-14 animate-spin rounded-full border-4 border-blue-300/30 border-t-blue-300" />
+            <p className="text-xs uppercase tracking-[0.22em] text-blue-200/85">Publicando</p>
+            <h3 className="mt-2 text-2xl font-black text-white">Se esta preparando tu formulario</h3>
+            <p className="mt-3 text-sm text-slate-300">
+              {
+                [
+                  'Validando configuraciones y permisos de acceso.',
+                  'Guardando estructura de secciones y preguntas.',
+                  'Sincronizando opciones y respuestas correctas.',
+                  'Generando enlace publico y finalizando publicacion.',
+                ][publishOverlayStep]
+              }
+            </p>
+          </div>
+        </div>
+      ) : null}
+
+      {publishResult?.url ? (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-white/15 bg-black p-6 text-white shadow-[0_28px_80px_rgba(0,0,0,0.65)]">
+            <div className="mb-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-emerald-200/85">Publicado</p>
+              <h3 className="mt-1 text-2xl font-black">Formulario publicado correctamente</h3>
+              <p className="mt-1 text-sm text-slate-300">Comparte este enlace o escanea el QR para abrirlo en cualquier dispositivo.</p>
+            </div>
+
+            <div className="rounded-xl mt-10">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-300">URL pública</p>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <input
+                  type="text"
+                  readOnly
+                  value={publishResult.url}
+                  className="flex-1 rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-xs text-slate-100"
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(publishResult.url)
+                      setSuccessToast('URL publica copiada al portapapeles')
+                    } catch {
+                      setSaveError('No se pudo copiar la URL publica')
+                    }
+                  }}
+                  className="rounded-lg border cursor-pointer border-emerald-300/30 bg-emerald-500/15 px-3 py-2 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/25"
+                >
+                  Copiar URL
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-center">
+              <div className="rounded-xl border border-white/15 bg-black p-3">
+                <img
+                  src={`https://quickchart.io/qr?text=${encodeURIComponent(publishResult.url)}&light=ffffff&dark=000000&size=220`}
+                  alt="Codigo QR del formulario publicado"
+                  className="h-52 w-52 rounded bg-white p-2"
+                />
+              </div>
+            </div>
+
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setPublishResult(null)}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-500"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
 
@@ -1982,7 +2078,7 @@ function FormBuilderPage(props) {
         </section>
       )) : (
         <section className="mx-auto max-w-6xl px-5 py-8 pb-28 lg:pr-[23rem]">
-          <article className="mb-7 rounded-2xl border border-white/10 bg-[#0b1324]/90 p-6 shadow-[0_16px_40px_rgba(2,6,23,0.45)] lg:fixed lg:right-5 lg:top-24 lg:z-20 lg:w-[21rem] lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+          <article className="mb-7 rounded-2xl border border-white/10 bg-white/5 p-6 shadow-[0_16px_40px_rgba(2,6,23,0.45)] lg:fixed lg:right-5 lg:top-24 lg:z-20 lg:w-[21rem] lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
             <div className="mb-4">
               <h2 className="text-lg font-bold text-slate-100">Configuración</h2>
             </div>
@@ -1993,7 +2089,7 @@ function FormBuilderPage(props) {
                 <select
                   value={selectedThemePreset}
                   onChange={(event) => handleThemeSelectChange(event.target.value)}
-                  className="mt-2 w-full rounded-lg border border-white/15 bg-[#111827] px-3 py-2 text-sm text-slate-100 outline-none focus:border-primary-400"
+                  className="mt-2 w-full rounded-lg border border-white/15 bg-black px-3 py-2 text-sm text-slate-100 outline-none focus:border-primary-400"
                 >
                   {THEME_PRESET_OPTIONS.map((preset) => (
                     <option key={preset.value} value={preset.value}>
@@ -2008,7 +2104,7 @@ function FormBuilderPage(props) {
               <button
                 type="button"
                 onClick={() => setShowCustomThemeModal(true)}
-                className="mt-3 w-full rounded-lg border border-cyan-300/30 bg-cyan-500/12 px-3 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/20"
+                className="mt-3 w-full rounded-lg border border-primary-300/30 bg-primary-500/12 px-3 py-2 text-sm font-semibold text-primary-100 transition hover:bg-primary-500/20"
               >
                 Ajustar colores personalizados
               </button>
@@ -2042,7 +2138,7 @@ function FormBuilderPage(props) {
             </div>
 
             {formMode === 'strict' || formMode === 'quiz' ? (
-              <p className="mt-4 rounded-lg border border-white/15 bg-[#0f172a]/70 px-3 py-2 text-xs text-slate-300">
+              <p className="mt-4 rounded-lg border border-white/15 bg-black/70 px-3 py-2 text-xs text-slate-300">
                 Los controles de este modo se muestran en un panel flotante abajo a la derecha.
               </p>
             ) : null}
@@ -2063,7 +2159,7 @@ function FormBuilderPage(props) {
                     onClick={() => setFormMode(mode.value)}
                     className={`cursor-pointer rounded-xl border px-3 py-2 text-sm font-semibold transition ${isActiveMode
                       ? 'border-primary-300/35 bg-linear-to-r from-primary-600 to-primary-600 text-white shadow-[0_8px_22px_rgba(79,70,229,0.35)]'
-                      : 'border-white/20 bg-[#111827] text-slate-300 hover:bg-[#1a2336]'
+                      : 'border-white/20 bg-black text-slate-300 hover:bg-[#1a2336]'
                       }`}
                   >
                     {mode.label}
@@ -2113,7 +2209,7 @@ function FormBuilderPage(props) {
                 <button
                   type="button"
                   onClick={() => setShowAddQuestionModal(true)}
-                  className="rounded-xl border border-primary-300/30 bg-linear-to-r from-primary-600 to-primary-600 px-4 py-2 text-sm font-semibold text-white transition hover:from-primary-500 hover:to-primary-500"
+                  className="rounded-xl cursor-pointer border border-primary-300/30 bg-linear-to-r from-primary-600 to-primary-600 px-4 py-2 text-sm font-semibold text-white transition hover:from-primary-500 hover:to-primary-500"
                 >
                   + Agregar pregunta
                 </button>
@@ -2157,7 +2253,7 @@ function FormBuilderPage(props) {
                   <button
                     type="button"
                     onClick={addSection}
-                    className="border-b-2 border-transparent px-1 pb-3 pt-1 text-sm font-semibold whitespace-nowrap text-cyan-300 transition hover:text-cyan-200"
+                    className="border-b-2 border-transparent px-1 pb-3 pt-1 text-sm font-semibold whitespace-nowrap text-primary-300 transition hover:text-primary-200"
                   >
                     + Nueva sección
                   </button>
@@ -2172,14 +2268,14 @@ function FormBuilderPage(props) {
                 {Array.from({ length: 3 }, (_, idx) => (
                   <article
                     key={`ai-skeleton-${idx}`}
-                    className="overflow-hidden rounded-2xl border border-white/70 bg-white/85 p-5 shadow-[0_12px_24px_rgba(15,23,42,0.08)]"
+                    className="overflow-hidden rounded-2xl border border-white/12 bg-[#0b1220]/85 p-5 shadow-[0_14px_28px_rgba(2,6,23,0.45)]"
                   >
-                    <div className="mb-3 h-4 w-1/3 rounded bg-gray-200/80 shimmer-strip" />
-                    <div className="mb-5 h-6 w-4/5 rounded bg-gray-200/80 shimmer-strip" />
+                    <div className="mb-3 h-4 w-1/3 rounded bg-slate-700/70 shimmer-strip-dark" />
+                    <div className="mb-5 h-6 w-4/5 rounded bg-slate-700/70 shimmer-strip-dark" />
                     <div className="space-y-2">
-                      <div className="h-3 w-full rounded bg-gray-200/70 shimmer-strip" />
-                      <div className="h-3 w-11/12 rounded bg-gray-200/70 shimmer-strip" />
-                      <div className="h-3 w-9/12 rounded bg-gray-200/70 shimmer-strip" />
+                      <div className="h-3 w-full rounded bg-slate-700/60 shimmer-strip-dark" />
+                      <div className="h-3 w-11/12 rounded bg-slate-700/60 shimmer-strip-dark" />
+                      <div className="h-3 w-9/12 rounded bg-slate-700/60 shimmer-strip-dark" />
                     </div>
                   </article>
                 ))}
@@ -2205,7 +2301,7 @@ function FormBuilderPage(props) {
                   className={`soft-enter overflow-hidden rounded-2xl border-2 bg-white/3 shadow-[0_14px_30px_rgba(2,6,23,0.2)] transition ${isActive ? 'border-primary-800 ring-2 ring-primary-400/20' : 'border-white/5 hover:border-white/15'}`}
                   onClick={() => setActiveQuestionId(question.id)}
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-linear-to-r from-[#0f172a] to-[#111827] px-5 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-white/5 px-5 py-3">
                     <div>
                       <p className="text-xs font-semibold uppercase text-slate-300">Pregunta {index + 1}</p>
                       <p className="text-xs text-slate-400">Seccion {question.section}</p>
@@ -2218,7 +2314,7 @@ function FormBuilderPage(props) {
                           event.stopPropagation()
                           updateQuestion(question.id, { section: Number(event.target.value) })
                         }}
-                        className="rounded-lg border border-white/20 bg-[#111827] px-2 py-1 text-xs text-slate-100 outline-none focus:border-primary-400"
+                        className="rounded-lg border border-white/20 bg-black px-2 py-1 text-xs text-slate-100 outline-none focus:border-primary-400"
                       >
                         {Array.from({ length: sectionCount }, (_, idx) => idx + 1).map((section) => (
                           <option key={`${question.id}-section-${section}`} value={section}>
@@ -2227,7 +2323,7 @@ function FormBuilderPage(props) {
                         ))}
                       </select>
 
-                      <div className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-[#111827] px-2 py-1.5">
+                      <div className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-black px-2 py-1.5">
                         <QuestionTypeIcon type={question.type} className="h-4 w-4 text-slate-300" />
                         <select
                           value={question.type}
@@ -2264,7 +2360,7 @@ function FormBuilderPage(props) {
                             min={0}
                             value={question.points}
                             onChange={(event) => updateQuestion(question.id, { points: Number(event.target.value) || 0 })}
-                            className="ml-2 w-16 rounded-md border border-white/20 bg-[#111827] px-2 py-1 text-xs text-slate-100"
+                            className="ml-2 w-16 rounded-md border border-white/20 bg-black px-2 py-1 text-xs text-slate-100"
                           />
                         </label>
                         {hasConfigSettings ? (
@@ -2274,7 +2370,7 @@ function FormBuilderPage(props) {
                               event.stopPropagation()
                               setOpenQuestionSettings((current) => ({ ...current, [question.id]: !current[question.id] }))
                             }}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-[#111827] px-2 py-1 text-xs font-semibold text-slate-200 transition hover:border-primary-300/35 hover:text-primary-200"
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-black px-2 py-1 text-xs font-semibold text-slate-200 transition hover:border-primary-300/35 hover:text-primary-200"
                           >
                             <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <path strokeLinecap="round" strokeLinejoin="round" d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z" />
@@ -2337,7 +2433,7 @@ function FormBuilderPage(props) {
                                 correctAnswers: value === '' ? [] : [Number(value)],
                               })
                             }}
-                            className="mt-1 w-full rounded-lg border border-white/20 bg-[#111827] px-3 py-2 text-slate-100"
+                            className="mt-1 w-full rounded-lg border border-white/20 bg-black px-3 py-2 text-slate-100"
                           >
                             <option value="">Sin respuesta correcta</option>
                             {question.options.map((option, optionIndex) => (
@@ -2359,7 +2455,7 @@ function FormBuilderPage(props) {
                           <input
                             value={option}
                             onChange={(event) => updateArrayValue(question.id, optionIndex, event.target.value)}
-                            className="min-w-55 flex-1 rounded-lg border border-white/20 bg-[#111827] px-3 py-2 text-sm text-slate-100"
+                            className="min-w-55 flex-1 rounded-lg border border-white/20 bg-black px-3 py-2 text-sm text-slate-100"
                           />
 
                           {question.type !== 'ranking' && question.type !== 'checkboxes' ? (
@@ -2391,7 +2487,7 @@ function FormBuilderPage(props) {
                                   event.stopPropagation()
                                   moveOption(question.id, optionIndex, -1)
                                 }}
-                                className="rounded-lg border border-white/20 bg-[#111827] px-2.5 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-primary-300/35 hover:bg-[#1a2336] disabled:cursor-not-allowed disabled:opacity-40"
+                                className="rounded-lg border border-white/20 bg-black px-2.5 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-primary-300/35 hover:bg-[#1a2336] disabled:cursor-not-allowed disabled:opacity-40"
                               >
                                 ↑
                               </button>
@@ -2402,7 +2498,7 @@ function FormBuilderPage(props) {
                                   event.stopPropagation()
                                   moveOption(question.id, optionIndex, 1)
                                 }}
-                                className="rounded-lg border border-white/20 bg-[#111827] px-2.5 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-primary-300/35 hover:bg-[#1a2336] disabled:cursor-not-allowed disabled:opacity-40"
+                                className="rounded-lg border border-white/20 bg-black px-2.5 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-primary-300/35 hover:bg-[#1a2336] disabled:cursor-not-allowed disabled:opacity-40"
                               >
                                 ↓
                               </button>
@@ -2439,7 +2535,7 @@ function FormBuilderPage(props) {
                               type="number"
                               value={question.scaleMin}
                               onChange={(event) => updateQuestion(question.id, { scaleMin: Number(event.target.value) || 1 })}
-                              className="mt-1 w-full rounded-md border border-white/20 bg-[#111827] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
+                              className="mt-1 w-full rounded-md border border-white/20 bg-black px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
                             />
                           </label>
                           <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -2448,7 +2544,7 @@ function FormBuilderPage(props) {
                               type="number"
                               value={question.scaleMax}
                               onChange={(event) => updateQuestion(question.id, { scaleMax: Math.max(Number(event.target.value) || 2, question.scaleMin + 1) })}
-                              className="mt-1 w-full rounded-md border border-white/20 bg-[#111827] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
+                              className="mt-1 w-full rounded-md border border-white/20 bg-black px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
                             />
                           </label>
                           <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -2456,7 +2552,7 @@ function FormBuilderPage(props) {
                             <input
                               value={question.scaleMinLabel}
                               onChange={(event) => updateQuestion(question.id, { scaleMinLabel: event.target.value })}
-                              className="mt-1 w-full rounded-md border border-white/20 bg-[#111827] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
+                              className="mt-1 w-full rounded-md border border-white/20 bg-black px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
                             />
                           </label>
                           <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -2464,7 +2560,7 @@ function FormBuilderPage(props) {
                             <input
                               value={question.scaleMaxLabel}
                               onChange={(event) => updateQuestion(question.id, { scaleMaxLabel: event.target.value })}
-                              className="mt-1 w-full rounded-md border border-white/20 bg-[#111827] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
+                              className="mt-1 w-full rounded-md border border-white/20 bg-black px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
                             />
                           </label>
                           <div className="md:col-span-2 rounded-lg border border-amber-300/20 bg-amber-500/8 px-3 py-2 text-xs text-amber-100">
@@ -2472,7 +2568,7 @@ function FormBuilderPage(props) {
                           </div>
                         </>
                       ) : (
-                        <div className="md:col-span-2 rounded-xl border border-white/15 bg-[#111827] px-4 py-3 text-sm text-slate-300">
+                        <div className="md:col-span-2 rounded-xl border border-white/15 bg-black px-4 py-3 text-sm text-slate-300">
                           {question.type === 'emoji_scale' ? (
                             <>
                               Escala fija de 1 a 5.
@@ -2496,7 +2592,7 @@ function FormBuilderPage(props) {
                         <input
                           value={question.minLength}
                           onChange={(event) => updateQuestion(question.id, { minLength: event.target.value })}
-                          className="mt-1 w-full rounded-md border border-white/20 bg-[#111827] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
+                          className="mt-1 w-full rounded-md border border-white/20 bg-black px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
                           type="number"
                         />
                       </label>
@@ -2505,7 +2601,7 @@ function FormBuilderPage(props) {
                         <input
                           value={question.maxLength}
                           onChange={(event) => updateQuestion(question.id, { maxLength: event.target.value })}
-                          className="mt-1 w-full rounded-md border border-white/20 bg-[#111827] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
+                          className="mt-1 w-full rounded-md border border-white/20 bg-black px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
                           type="number"
                         />
                       </label>
@@ -2514,7 +2610,7 @@ function FormBuilderPage(props) {
                         <input
                           value={question.regexPattern}
                           onChange={(event) => updateQuestion(question.id, { regexPattern: event.target.value })}
-                          className="mt-1 w-full rounded-md border border-white/20 bg-[#111827] px-2.5 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
+                          className="mt-1 w-full rounded-md border border-white/20 bg-black px-2.5 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
                           placeholder="Ejemplo: ^[A-Z]{3}[0-9]{3}$"
                         />
                       </label>
@@ -2529,7 +2625,7 @@ function FormBuilderPage(props) {
                         <input
                           value={question.shortAnswerCorrect || ''}
                           onChange={(event) => updateQuestion(question.id, { shortAnswerCorrect: event.target.value })}
-                          className="mt-1 w-full rounded-lg border border-emerald-300/30 bg-[#0f172a] px-3 py-2 text-emerald-100 placeholder:text-emerald-200/50 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                          className="mt-1 w-full rounded-lg border border-emerald-300/30 bg-black px-3 py-2 text-emerald-100 placeholder:text-emerald-200/50 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
                           placeholder="Escribe la respuesta valida"
                         />
                       </label>
@@ -2539,7 +2635,7 @@ function FormBuilderPage(props) {
                         <textarea
                           value={question.shortAnswerVariants || ''}
                           onChange={(event) => updateQuestion(question.id, { shortAnswerVariants: event.target.value })}
-                          className="mt-1 w-full rounded-lg border border-white/20 bg-[#111827] px-3 py-2 text-slate-100 placeholder:text-slate-500 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
+                          className="mt-1 w-full rounded-lg border border-white/20 bg-black px-3 py-2 text-slate-100 placeholder:text-slate-500 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
                           rows={3}
                           placeholder="Una variante por linea o separadas por coma."
                         />
@@ -2557,7 +2653,7 @@ function FormBuilderPage(props) {
                               type="number"
                               value={question.minValue}
                               onChange={(event) => updateQuestion(question.id, { minValue: event.target.value })}
-                              className="mt-1 w-full rounded-md border border-white/20 bg-[#111827] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
+                              className="mt-1 w-full rounded-md border border-white/20 bg-black px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
                             />
                           </label>
                           <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -2566,7 +2662,7 @@ function FormBuilderPage(props) {
                               type="number"
                               value={question.maxValue}
                               onChange={(event) => updateQuestion(question.id, { maxValue: event.target.value })}
-                              className="mt-1 w-full rounded-md border border-white/20 bg-[#111827] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
+                              className="mt-1 w-full rounded-md border border-white/20 bg-black px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
                             />
                           </label>
                         </div>
@@ -2579,7 +2675,7 @@ function FormBuilderPage(props) {
                             type="number"
                             value={question.numberCorrect || ''}
                             onChange={(event) => updateQuestion(question.id, { numberCorrect: event.target.value })}
-                            className="mt-1 w-full rounded-lg border border-emerald-300/30 bg-[#0f172a] px-3 py-2 text-emerald-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                            className="mt-1 w-full rounded-lg border border-emerald-300/30 bg-black px-3 py-2 text-emerald-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
                             placeholder="Ejemplo: 42"
                           />
                         </label>
@@ -2595,7 +2691,7 @@ function FormBuilderPage(props) {
                           type="date"
                           value={question.dateCorrect || ''}
                           onChange={(event) => updateQuestion(question.id, { dateCorrect: event.target.value })}
-                          className="mt-1 w-full rounded-lg border border-emerald-300/30 bg-[#0f172a] px-3 py-2 text-emerald-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                          className="mt-1 w-full rounded-lg border border-emerald-300/30 bg-black px-3 py-2 text-emerald-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
                         />
                       </label>
                     </div>
@@ -2609,7 +2705,7 @@ function FormBuilderPage(props) {
                           type="time"
                           value={question.timeCorrect || ''}
                           onChange={(event) => updateQuestion(question.id, { timeCorrect: event.target.value })}
-                          className="mt-1 w-full rounded-lg border border-emerald-300/30 bg-[#0f172a] px-3 py-2 text-emerald-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                          className="mt-1 w-full rounded-lg border border-emerald-300/30 bg-black px-3 py-2 text-emerald-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
                         />
                       </label>
                     </div>
@@ -2623,7 +2719,7 @@ function FormBuilderPage(props) {
                           type="number"
                           value={question.minSelections}
                           onChange={(event) => updateQuestion(question.id, { minSelections: event.target.value })}
-                          className="mt-1 w-full rounded-md border border-white/20 bg-[#111827] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
+                          className="mt-1 w-full rounded-md border border-white/20 bg-black px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
                         />
                       </label>
                       <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -2632,7 +2728,7 @@ function FormBuilderPage(props) {
                           type="number"
                           value={question.maxSelections}
                           onChange={(event) => updateQuestion(question.id, { maxSelections: event.target.value })}
-                          className="mt-1 w-full rounded-md border border-white/20 bg-[#111827] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
+                          className="mt-1 w-full rounded-md border border-white/20 bg-black px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
                         />
                       </label>
                     </div>
@@ -2643,20 +2739,20 @@ function FormBuilderPage(props) {
                       <button
                         type="button"
                         onClick={() => duplicateQuestion(question.id)}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/20 bg-white/5 text-slate-200 transition hover:bg-white/10"
+                        className="inline-flex h-9 cursor-pointer w-9 items-center justify-center rounded-lg  text-slate-200 transition hover:bg-white/10"
                         aria-label="Duplicar pregunta"
                         title="Duplicar"
                       >
-                        <DuplicateIcon className="h-4 w-4" />
+                        <DuplicateIcon className="h-6 w-6" />
                       </button>
                       <button
                         type="button"
                         onClick={() => removeQuestion(question.id)}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-300/30 bg-red-500/8 text-red-300 transition hover:bg-red-500/15"
+                        className="inline-flex cursor-pointer h-9 w-9 items-center justify-center rounded-lg  text-red-500 transition hover:bg-red-500/15"
                         aria-label="Eliminar pregunta"
                         title="Eliminar"
                       >
-                        <TrashIcon className="h-4 w-4" />
+                        <TrashIcon className="h-6 w-6" />
                       </button>
                     </div>
 
@@ -2699,10 +2795,10 @@ function FormBuilderPage(props) {
               <button
                 type="button"
                 onClick={() => setShowAddQuestionModal(false)}
-                className="h-9 w-9 rounded-full border border-white/20 bg-white/5 text-slate-300 transition hover:bg-white/10"
+                className="h-9 w-9 rounded-full   text-slate-300 transition hover:bg-white/10"
                 aria-label="Cerrar modal"
               >
-                ×
+                <CloseIcon className="h-4 w-4" />
               </button>
             </div>
 
@@ -2716,7 +2812,7 @@ function FormBuilderPage(props) {
                         addQuestion(type.value)
                         setShowAddQuestionModal(false)
                       }}
-                      className="w-full rounded-xl border border-white/15 bg-[#111827] px-4 py-3 text-left text-sm font-semibold text-slate-100 transition hover:border-primary-300/40 hover:bg-[#172034]"
+                      className="w-full cursor-pointer rounded-xl border border-white/15 bg-black px-4 py-3 text-left text-sm font-semibold text-slate-100 transition hover:border-primary-300/40 hover:bg-[#172034]"
                     >
                       <span className="inline-flex items-center gap-2.5">
                         <QuestionTypeIcon type={type.value} className="h-4 w-4 text-slate-300" />
@@ -2724,7 +2820,7 @@ function FormBuilderPage(props) {
                       </span>
                     </button>
 
-                    <div className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 w-56 -translate-x-1/2 rounded-lg border border-white/15 bg-[#0f172a] px-3 py-2 text-xs text-slate-200 opacity-0 shadow-[0_10px_30px_rgba(2,6,23,0.5)] transition group-hover:opacity-100">
+                    <div className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 w-56 -translate-x-1/2 rounded-lg border border-white/15 bg-black px-3 py-2 text-xs text-slate-200 opacity-0 shadow-[0_10px_30px_rgba(2,6,23,0.5)] transition group-hover:opacity-100">
                       {type.help}
                     </div>
                   </div>
@@ -2805,7 +2901,7 @@ function FormBuilderPage(props) {
               </div>
 
               {uploadingCover ? (
-                <p className="text-xs text-cyan-200">Subiendo portada a Supabase...</p>
+                <p className="text-xs text-primary-200">Subiendo portada a Supabase...</p>
               ) : null}
             </div>
           </div>
@@ -2902,8 +2998,8 @@ function FormBuilderPage(props) {
           {formMode === 'quiz' ? (
             <>
               <div className="mb-3 flex items-center justify-between gap-2">
-                <p className="text-sm font-bold text-cyan-100">Control en vivo del quiz</p>
-                <span className="rounded-full border border-cyan-300/30 bg-cyan-500/15 px-2 py-0.5 text-[11px] font-semibold text-cyan-100">
+                <p className="text-sm font-bold text-primary-100">Control en vivo del quiz</p>
+                <span className="rounded-full border border-primary-300/30 bg-primary-500/15 px-2 py-0.5 text-[11px] font-semibold text-primary-100">
                   Tiempo real
                 </span>
               </div>
@@ -2917,16 +3013,20 @@ function FormBuilderPage(props) {
                   value={joinCode}
                   readOnly
                   placeholder="Se generará al guardar..."
-                  className="flex-1 rounded-lg border border-white/20 bg-[#111827] px-3 py-2 text-center font-mono text-base font-bold text-slate-100"
+                  className="flex-1 rounded-lg border border-white/20 bg-black px-3 py-2 text-center font-mono text-base font-bold text-slate-100"
                 />
                 {joinCode ? (
                   <button
                     type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(joinCode)
-                      alert('Código copiado al portapapeles!')
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(joinCode)
+                        setSuccessToast('Codigo copiado al portapapeles')
+                      } catch {
+                        setSaveError('No se pudo copiar el codigo')
+                      }
                     }}
-                    className="rounded-lg border border-cyan-300/35 bg-cyan-500/20 px-3 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/30"
+                    className="rounded-lg border border-primary-300/35 bg-primary-500/20 px-3 py-2 text-sm font-semibold text-primary-100 transition hover:bg-primary-500/30"
                   >
                     Copiar
                   </button>
@@ -2936,11 +3036,14 @@ function FormBuilderPage(props) {
               <div className="flex flex-col gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowQuizPanel(true)}
-                  disabled={!editMode || !public_id}
+                  onClick={() => {
+                    if (!controlPanelPublicId) return
+                    navigate(`/form/${controlPanelPublicId}/quiz-control`)
+                  }}
+                  disabled={!controlPanelPublicId}
                   className="w-full cursor-pointer mt-10 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-emerald-500 disabled:bg-gray-500"
                 >
-                  Ver sala de espera
+                  Abrir panel de control
                 </button>
               
               </div>
@@ -2973,7 +3076,7 @@ function FormBuilderPage(props) {
                     min="1"
                     value={strictDurationMinutes}
                     onChange={(event) => setStrictDurationMinutes(event.target.value)}
-                    className="mt-1 w-full rounded-lg border border-white/20 bg-[#111827] px-3 py-2 text-slate-100 outline-none focus:border-amber-300 focus:ring-2 focus:ring-amber-300/20"
+                    className="mt-1 w-full rounded-lg border border-white/20 bg-black px-3 py-2 text-slate-100 outline-none focus:border-amber-300 focus:ring-2 focus:ring-amber-300/20"
                   />
                   <span className="mt-1 block text-xs text-slate-400">Requiere cuenta logueada.</span>
                 </label>
@@ -2996,7 +3099,7 @@ function FormBuilderPage(props) {
                       type="datetime-local"
                       value={strictStartsAt}
                       onChange={(event) => setStrictStartsAt(event.target.value)}
-                      className="mt-1 w-full rounded-lg border border-white/20 bg-[#111827] px-3 py-2 text-slate-100 outline-none focus:border-amber-300 focus:ring-2 focus:ring-amber-300/20"
+                      className="mt-1 w-full rounded-lg border border-white/20 bg-black px-3 py-2 text-slate-100 outline-none focus:border-amber-300 focus:ring-2 focus:ring-amber-300/20"
                     />
                   </label>
                   <label className="text-sm text-slate-200">
@@ -3005,7 +3108,7 @@ function FormBuilderPage(props) {
                       type="datetime-local"
                       value={strictEndsAt}
                       onChange={(event) => setStrictEndsAt(event.target.value)}
-                      className="mt-1 w-full rounded-lg border border-white/20 bg-[#111827] px-3 py-2 text-slate-100 outline-none focus:border-amber-300 focus:ring-2 focus:ring-amber-300/20"
+                      className="mt-1 w-full rounded-lg border border-white/20 bg-black px-3 py-2 text-slate-100 outline-none focus:border-amber-300 focus:ring-2 focus:ring-amber-300/20"
                     />
                   </label>
                 </div>
@@ -3025,13 +3128,6 @@ function FormBuilderPage(props) {
         </aside>
       ) : null}
 
-      {/* Panel de control de sesión de quiz */}
-      {showQuizPanel && formMode === 'quiz' && formUUID && (
-        <QuizAdminPanel
-          formId={formUUID}
-          onClose={() => setShowQuizPanel(false)}
-        />
-      )}
     </main>
   )
 }

@@ -88,6 +88,20 @@ h4 {
 	animation: shimmer-slide 1.2s ease-in-out infinite;
 }
 
+.shimmer-strip-dark {
+	position: relative;
+	overflow: hidden;
+}
+
+.shimmer-strip-dark::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	transform: translateX(-120%);
+	background: linear-gradient(90deg, transparent 0%, rgba(148, 163, 184, 0.26) 50%, transparent 100%);
+	animation: shimmer-slide 1.2s ease-in-out infinite;
+}
+
 @keyframes soft-enter {
 	from {
 		opacity: 0;
@@ -201,6 +215,17 @@ h4 {
   }
 }
 
+@keyframes fadeUpToQuarter {
+	0% {
+		opacity: 0;
+		transform: translateY(40px);
+	}
+	100% {
+		opacity: 0.30;
+		transform: translateY(0);
+	}
+}
+
 @keyframes fadeDown {
   0% {
     opacity: 0;
@@ -223,6 +248,12 @@ h4 {
   opacity: 0;
   animation: fadeUp 0.8s ease forwards;
   animation-delay: 1.5s; /* espera a que termine h1 */
+}
+
+.animate-title-quarter {
+	opacity: 0;
+	animation: fadeUpToQuarter 0.8s ease forwards;
+	animation-delay: 1.5s;
 }
 
 /* p */

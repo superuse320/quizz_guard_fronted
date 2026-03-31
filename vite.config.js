@@ -4,11 +4,14 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
-    host: true, 
+    host: true,
     port: 5173,
     strictPort: true,
+    allowedHosts: [
+      'quizzia-fronted-xpmp8a-522d25-107-148-105-38.traefik.me'
+    ],
     watch: {
-      usePolling: true, 
+      usePolling: true,
     },
   },
 })

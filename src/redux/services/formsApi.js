@@ -44,7 +44,43 @@ export const formsApi = createApi({
         { type: 'Forms', id: 'LIST' },
       ],
     }),
+    upsertForm: builder.mutation({
+      async queryFn({ editMode, publicId, formData }) {
+        const isEdit = Boolean(editMode && publicId);
+
+        const query = isEdit
+          ? supabase
+              .from('forms')
+              .update(formData)
+              .eq('public_id', publicId)
+              .select('id, public_id, join_code, status')
+              .single()
+          : supabase
+              .from('forms')
+              .insert([formData])
+              .select('id, public_id, join_code, status')
+              .single();
+
+        const { data, error } = await query;
+
+        if (error) {
+          return { error: { status: error.code || 'SUPABASE_ERROR', data: error.message } };
+        }
+
+        return { data };
+      },
+      invalidatesTags: (result) => {
+        if (!result?.id) {
+          return [{ type: 'Forms', id: 'LIST' }];
+        }
+
+        return [
+          { type: 'Forms', id: result.id },
+          { type: 'Forms', id: 'LIST' },
+        ];
+      },
+    }),
   }),
 });
 
-export const { useGetFormsQuery, useDeleteFormMutation } = formsApi;
+export const { useGetFormsQuery, useDeleteFormMutation, useUpsertFormMutation } = formsApi;

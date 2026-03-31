@@ -23,7 +23,7 @@ const getAvatarColor = (name) => {
   return avatarColors[hash % avatarColors.length];
 };
 
-export default function DashboardHeader({ email, name }) {
+export default function DashboardHeader({ email, name, showSearch = true }) {
     const displayName = name || email || '';
     const initial = displayName.charAt(0).toUpperCase();
     const avatarColor = getAvatarColor(displayName);
@@ -53,17 +53,19 @@ export default function DashboardHeader({ email, name }) {
                 </div>
 
                 {/* Barra de búsqueda */}
-                <div className="flex-1 flex justify-center">
-                    <div className="flex items-center w-full max-w-xl bg-white/15 rounded-full px-4 py-3">
-                        <SearchIcon className="text-gray-400 size-5 mr-2" />
-                        <input
-                            type="text"
-                            placeholder="Buscar..."
-                            className="bg-transparent outline-none border-none text-white placeholder-gray-400 flex-1 text-sm w-full"
-                            style={{ minWidth: 0 }}
-                        />
+                {showSearch ? (
+                    <div className="flex-1 flex justify-center">
+                        <div className="flex items-center w-full max-w-xl bg-white/15 rounded-full px-4 py-3">
+                            <SearchIcon className="text-gray-400 size-5 mr-2" />
+                            <input
+                                type="text"
+                                placeholder="Buscar..."
+                                className="bg-transparent outline-none border-none text-white placeholder-gray-400 flex-1 text-sm w-full"
+                                style={{ minWidth: 0 }}
+                            />
+                        </div>
                     </div>
-                </div>
+                ) : <div className="flex-1" />}
 
                 {/* Menú apps y avatar */}
                 <div className="flex items-center gap-4 min-w-30 justify-end">

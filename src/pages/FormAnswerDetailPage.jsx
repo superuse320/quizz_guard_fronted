@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 export default function FormAnswerDetailPage() {
   const { public_id, submission_id } = useParams();
   const [form, setForm] = useState(null);
+  const [blockedByQuizMode, setBlockedByQuizMode] = useState(false);
   const [questions, setQuestions] = useState([]);
   const [options, setOptions] = useState([]);
   const [answers, setAnswers] = useState([]);
@@ -17,13 +18,20 @@ export default function FormAnswerDetailPage() {
       // Obtener el formulario
       const { data: formData } = await supabase
         .from('forms')
-        .select('id, title, description')
+        .select('id, title, description, form_mode')
         .eq('public_id', public_id)
         .single();
       if (!formData) {
         setLoading(false);
         return;
       }
+
+      if (String(formData.form_mode || '').toLowerCase() === 'quiz') {
+        setBlockedByQuizMode(true);
+        setLoading(false);
+        return;
+      }
+
       setForm(formData);
       // Obtener preguntas
       const { data: questionsData } = await supabase
@@ -56,6 +64,7 @@ export default function FormAnswerDetailPage() {
   }, [public_id, submission_id]);
 
   if (loading) return <div className="p-8 text-center">Cargando...</div>;
+  if (blockedByQuizMode) return <div className="p-8 text-center">Las respuestas no estan disponibles para formularios tipo quiz.</div>;
   if (!form || !submission) return <div className="p-8 text-center">No encontrado</div>;
 
   return (

@@ -13,6 +13,7 @@ export default function JoinQuizPage() {
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showInvalidCodeModal, setShowInvalidCodeModal] = useState(false);
+  const [showRoomFullModal, setShowRoomFullModal] = useState(false);
   const { session } = useSession();
   const user = session?.user || null;
   const { profile } = useProfile(user?.id || null);
@@ -34,6 +35,13 @@ export default function JoinQuizPage() {
   const handleJoinQuiz = async (e) => {
     e.preventDefault();
     setError(null);
+
+    if (!user) {
+      setError('Debes iniciar sesión para unirte al quiz.');
+      setIsLoginModalOpen(true);
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -90,6 +98,25 @@ export default function JoinQuizPage() {
         return;
       }
 
+      const { count: participantsCount, error: countError } = await supabase
+        .from('quiz_participants')
+        .select('id', { count: 'exact', head: true })
+        .eq('quiz_session_id', sessionData.id)
+        .neq('status', 'finished');
+
+      if (countError) {
+        setError('No se pudo validar el cupo de participantes. Intenta nuevamente.');
+        setLoading(false);
+        return;
+      }
+
+      if (Number(participantsCount || 0) >= 10) {
+        setError('La sala alcanzo el limite de 10 participantes.');
+        setShowRoomFullModal(true);
+        setLoading(false);
+        return;
+      }
+
       // 2. Unirse a la sesión
       const { data: participantData, error: joinError } = await supabase
         .rpc('join_quiz_session', {
@@ -99,7 +126,13 @@ export default function JoinQuizPage() {
         });
 
       if (joinError) {
-        setError('Error al unirse al quiz: ' + joinError.message);
+        const message = String(joinError.message || '');
+        if (message.toLowerCase().includes('participant limit')) {
+          setError('La sala alcanzo el limite de 10 participantes.');
+          setShowRoomFullModal(true);
+        } else {
+          setError('Error al unirse al quiz: ' + joinError.message);
+        }
         setLoading(false);
         return;
       }
@@ -270,7 +303,7 @@ export default function JoinQuizPage() {
                   : 'bg-linear-to-r from-primary-400 to-primary-600 hover:from-primary-500 cursor-pointer hover:to-primary-500 active:scale-95 shadow-lg shadow-violet-900/50 border border-violet-300/20'
                 }`}
             >
-              {loading ? 'Uniéndote...' : 'Unirse al Quiz'}
+              {loading ? 'Uniéndote...' : user ? 'Unirse al Quiz' : 'Inicia sesión para unirte'}
             </button>
           </form>
 
@@ -301,6 +334,25 @@ export default function JoinQuizPage() {
                 onClick={() => setShowInvalidCodeModal(false)}
                 className="mt-5 w-full py-3 rounded-xl cursor-pointer
                  bg-linear-to-r from-red-500 to-rose-500 hover:from-red-400 hover:to-rose-400 text-white font-bold transition border border-red-200/20"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRoomFullModal && (
+        <div className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-amber-300/25 bg-[#070b14] shadow-[0_30px_80px_rgba(0,0,0,0.65),0_0_30px_rgba(245,158,11,0.15)] overflow-hidden">
+            <div className="px-6 py-5 bg-linear-to-r from-amber-500/20 to-yellow-500/10 border-b border-white/10 text-center">
+              <h3 className="text-xl font-black text-white tracking-wide">Sala llena</h3>
+            </div>
+            <div className="px-6 py-5 text-center">
+              <p className="text-sm text-slate-300">Ya no se puede unir más gente a este quiz. El límite es de 10 participantes.</p>
+              <button
+                onClick={() => setShowRoomFullModal(false)}
+                className="mt-5 w-full py-3 rounded-xl cursor-pointer bg-linear-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-black font-bold transition border border-amber-200/20"
               >
                 Entendido
               </button>

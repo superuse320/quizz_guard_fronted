@@ -52,6 +52,34 @@ const formatMsAsCountdown = (ms) => {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 };
 
+const hexToRgba = (hex, alpha = 1) => {
+  if (!hex || typeof hex !== 'string') return `rgba(15, 23, 42, ${alpha})`;
+  let normalized = hex.replace('#', '').trim();
+  if (normalized.length === 3) {
+    normalized = normalized.split('').map((char) => `${char}${char}`).join('');
+  }
+  if (normalized.length !== 6) return `rgba(15, 23, 42, ${alpha})`;
+  const r = parseInt(normalized.slice(0, 2), 16);
+  const g = parseInt(normalized.slice(2, 4), 16);
+  const b = parseInt(normalized.slice(4, 6), 16);
+  if ([r, g, b].some(Number.isNaN)) return `rgba(15, 23, 42, ${alpha})`;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+const getLuminance = (hex) => {
+  if (!hex || typeof hex !== 'string') return 0.2;
+  let normalized = hex.replace('#', '').trim();
+  if (normalized.length === 3) {
+    normalized = normalized.split('').map((char) => `${char}${char}`).join('');
+  }
+  if (normalized.length !== 6) return 0.2;
+  const r = parseInt(normalized.slice(0, 2), 16) / 255;
+  const g = parseInt(normalized.slice(2, 4), 16) / 255;
+  const b = parseInt(normalized.slice(4, 6), 16) / 255;
+  if ([r, g, b].some(Number.isNaN)) return 0.2;
+  return (0.2126 * r) + (0.7152 * g) + (0.0722 * b);
+};
+
 function FormPublicView() {
   const { public_id } = useParams();
   const [form, setForm] = useState(null);
@@ -59,6 +87,7 @@ function FormPublicView() {
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [blockedByQuizMode, setBlockedByQuizMode] = useState(false);
   const [formTheme, setFormTheme] = useState({
     primary: '#2563eb',
     accent: '#14b8a6',
@@ -73,7 +102,6 @@ function FormPublicView() {
   const [submitMsg, setSubmitMsg] = useState('');
   const [strictStep, setStrictStep] = useState(0);
   const [strictStarted, setStrictStarted] = useState(false);
-  const [strictSession, setStrictSession] = useState(null);
   const [strictSubmissionId, setStrictSubmissionId] = useState(null);
   const [strictDurationRemaining, setStrictDurationRemaining] = useState(null);
   const [strictDurationActive, setStrictDurationActive] = useState(false);
@@ -83,8 +111,25 @@ function FormPublicView() {
   const [strictNowMs, setStrictNowMs] = useState(Date.now());
   const [strictReturnCountdown, setStrictReturnCountdown] = useState(null);
   const [strictReturnCountdownActive, setStrictReturnCountdownActive] = useState(false);
+  const [activeSession, setActiveSession] = useState(null);
+  const [alreadySubmitted, setAlreadySubmitted] = useState(false);
+  const [completedView, setCompletedView] = useState(false);
   const strictLastEventRef = useRef(0);
   const wakeLockRef = useRef(null);
+
+  const checkUserAlreadySubmitted = async (formId, userId) => {
+    if (!formId || !userId) return false;
+    const { data, error } = await supabase
+      .from('form_submissions')
+      .select('id')
+      .eq('form_id', formId)
+      .eq('respondent_user_id', userId)
+      .eq('status', 'submitted')
+      .limit(1);
+
+    if (error) return false;
+    return Array.isArray(data) && data.length > 0;
+  };
 
   // Handler para actualizar respuestas
   const handleResponse = (qid, value) => {
@@ -326,7 +371,6 @@ function FormPublicView() {
     const windowEnabled = Boolean(strictConfig.window_enabled);
     const startsAt = toValidDate(strictConfig.starts_at || form?.opened_at);
     const endsAt = toValidDate(strictConfig.ends_at || form?.closed_at);
-    const requiresAuth = Boolean(strictConfig.require_auth || durationEnabled);
     const now = new Date();
 
     if (windowEnabled) {
@@ -340,20 +384,24 @@ function FormPublicView() {
       }
     }
 
-    let activeSession = null;
-    if (requiresAuth) {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const userSession = sessionData?.session || null;
-      if (!userSession?.user?.id) {
-        setSubmitMsg('Debes iniciar sesion para responder este examen en modo estricto.');
-        return;
-      }
-      activeSession = userSession;
-      setStrictSession(userSession);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userSession = sessionData?.session || null;
+    if (!userSession?.user?.id) {
+      setSubmitMsg('Debes iniciar sesion para responder este formulario.');
+      return;
+    }
+
+    setActiveSession(userSession);
+
+    const hasSubmission = await checkUserAlreadySubmitted(form.id, userSession.user.id);
+    if (hasSubmission) {
+      setAlreadySubmitted(true);
+      setSubmitMsg('Ya has respondido este formulario anteriormente.');
+      return;
     }
 
     if (durationEnabled && durationMinutes > 0) {
-      if (!activeSession?.user?.id) {
+      if (!userSession?.user?.id) {
         setSubmitMsg('La duracion por usuario requiere cuenta logueada.');
         return;
       }
@@ -363,7 +411,7 @@ function FormPublicView() {
         .from('form_submissions')
         .select('id, started_at')
         .eq('form_id', form.id)
-        .eq('respondent_user_id', activeSession.user.id)
+        .eq('respondent_user_id', userSession.user.id)
         .eq('status', 'in_progress')
         .order('started_at', { ascending: false })
         .limit(1);
@@ -392,7 +440,7 @@ function FormPublicView() {
           .insert([
             {
               form_id: form.id,
-              respondent_user_id: activeSession.user.id,
+              respondent_user_id: userSession.user.id,
               status: 'in_progress',
               started_at: startedAtIso,
               submitted_at: null,
@@ -440,6 +488,21 @@ function FormPublicView() {
   // Enviar respuestas (real)
   const handleSubmit = async () => {
     if (submitting) return;
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userSession = sessionData?.session || null;
+    if (!userSession?.user?.id) {
+      setSubmitMsg('Debes iniciar sesion para responder este formulario.');
+      return;
+    }
+
+    const hasSubmission = await checkUserAlreadySubmitted(form.id, userSession.user.id);
+    if (hasSubmission) {
+      setAlreadySubmitted(true);
+      setSubmitMsg('Ya has respondido este formulario anteriormente.');
+      return;
+    }
+
     const nextErrors = {};
 
     for (const question of questions) {
@@ -475,6 +538,7 @@ function FormPublicView() {
             },
           })
           .eq('id', strictSubmissionId)
+          .eq('respondent_user_id', userSession.user.id)
           .select()
           .single();
 
@@ -486,7 +550,7 @@ function FormPublicView() {
       } else {
         const submissionPayload = {
           form_id: form.id,
-          respondent_user_id: strictSession?.user?.id || null,
+          respondent_user_id: userSession.user.id,
           status: 'submitted',
           started_at: new Date().toISOString(),
           submitted_at: submittedAtIso,
@@ -530,7 +594,9 @@ function FormPublicView() {
       await releaseWakeLock();
       releaseKeyboardLock();
       setStrictDurationActive(false);
-      setSubmitMsg('¡Respuestas enviadas correctamente!');
+      setSubmitMsg('');
+      setAlreadySubmitted(true);
+      setCompletedView(true);
     } catch (e) {
       setSubmitMsg('Error inesperado al enviar.');
     } finally {
@@ -551,6 +617,13 @@ function FormPublicView() {
       }
 
       const formData = payload.form;
+
+      if (String(formData?.form_mode || '').toLowerCase() === 'quiz') {
+        setBlockedByQuizMode(true);
+        setLoading(false);
+        return;
+      }
+
       const sectionsData = Array.isArray(payload.sections) ? payload.sections : [];
       const questionsData = Array.isArray(payload.questions) ? payload.questions : [];
 
@@ -591,9 +664,32 @@ function FormPublicView() {
   }, [public_id]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function syncSessionAndSubmission() {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const session = sessionData?.session || null;
+      if (cancelled) return;
+
+      setActiveSession(session);
+
+      if (form?.id && session?.user?.id) {
+        const hasSubmission = await checkUserAlreadySubmitted(form.id, session.user.id);
+        if (!cancelled) setAlreadySubmitted(hasSubmission);
+      } else if (!session?.user?.id) {
+        setAlreadySubmitted(false);
+      }
+    }
+
+    syncSessionAndSubmission();
+    return () => {
+      cancelled = true;
+    };
+  }, [form?.id]);
+
+  useEffect(() => {
     setStrictStep(0);
     setStrictStarted(false);
-    setStrictSession(null);
     setStrictSubmissionId(null);
     setStrictDurationRemaining(null);
     setStrictDurationActive(false);
@@ -601,6 +697,8 @@ function FormPublicView() {
     setStrictSuspiciousEvents([]);
     setStrictReturnCountdown(null);
     setStrictReturnCountdownActive(false);
+    setCompletedView(false);
+    setAlreadySubmitted(false);
     strictLastEventRef.current = 0;
     releaseWakeLock();
     releaseKeyboardLock();
@@ -844,6 +942,30 @@ function FormPublicView() {
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-white bg-black">Cargando formulario...</div>;
   if (notFound) return <div className="min-h-screen flex items-center justify-center text-white bg-black">Formulario no encontrado</div>;
+  if (blockedByQuizMode) return <div className="min-h-screen flex items-center justify-center text-white bg-black">Este formulario es tipo quiz y no tiene acceso por link publico.</div>;
+  if (completedView) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-black px-4 text-white">
+        <section className="w-full max-w-xl rounded-2xl border border-emerald-300/30 bg-emerald-500/10 p-8 text-center backdrop-blur-sm">
+          <p className="text-xs uppercase tracking-[0.2em] text-emerald-200">Formulario completado</p>
+          <h2 className="mt-2 text-3xl font-black">Tus respuestas fueron enviadas</h2>
+          <p className="mt-3 text-sm text-emerald-100/90">Gracias por completar este formulario.</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (alreadySubmitted) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-black px-4 text-white">
+        <section className="w-full max-w-xl rounded-2xl border border-amber-300/30 bg-amber-500/10 p-8 text-center backdrop-blur-sm">
+          <p className="text-xs uppercase tracking-[0.2em] text-amber-200">Formulario ya respondido</p>
+          <h2 className="mt-2 text-3xl font-black">Ya enviaste este formulario</h2>
+          <p className="mt-3 text-sm text-amber-100/90">Solo se permite una respuesta por usuario logueado.</p>
+        </section>
+      </main>
+    );
+  }
 
   // Agrupar preguntas por sección
   const questionsBySection = sections.map(section => ({
@@ -889,52 +1011,70 @@ function FormPublicView() {
       }]
     : (isStrictMode ? [] : questionsBySection);
 
+  const isSurfaceDark = getLuminance(formTheme.surface) < 0.52;
+  const textPrimary = isSurfaceDark ? '#f8fafc' : '#0f172a';
+  const textSecondary = isSurfaceDark ? '#e2e8f0' : '#1e293b';
+  const textMuted = isSurfaceDark ? '#cbd5e1' : '#475569';
+  const panelBg = hexToRgba(formTheme.surface, isSurfaceDark ? 0.86 : 0.92);
+  const panelBorder = hexToRgba(formTheme.accent, isSurfaceDark ? 0.35 : 0.26);
+  const inputBg = hexToRgba(formTheme.bgFrom, isSurfaceDark ? 0.5 : 0.65);
+  const inputBorder = hexToRgba(formTheme.accent, isSurfaceDark ? 0.32 : 0.26);
+  const overlayBg = isSurfaceDark ? 'rgba(2, 6, 23, 0.55)' : 'rgba(15, 23, 42, 0.28)';
+  const inputBaseClass = 'w-full rounded-xl border px-3 py-2.5 text-[15px] outline-none transition';
+  const inputBaseStyle = { backgroundColor: inputBg, borderColor: inputBorder, color: textPrimary };
+
   return (
     <main
       className={`min-h-screen ${strictSessionActive ? 'select-none' : ''}`}
       style={{
         backgroundImage: `linear-gradient(135deg, ${formTheme.bgFrom}, ${formTheme.bgTo})`,
+        color: textPrimary,
       }}
     >
+      <div className="fixed inset-0 -z-10" style={{ backgroundColor: overlayBg }} />
       <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
         <div className="absolute -left-20 top-16 h-72 w-72 rounded-full" style={{backgroundColor: formTheme.primary, opacity: 0.12, filter: 'blur(48px)'}} />
         <div className="absolute -right-24 top-1/3 h-80 w-80 rounded-full" style={{backgroundColor: formTheme.accent, opacity: 0.12, filter: 'blur(48px)'}} />
         <div className="absolute bottom-0 left-1/3 h-64 w-64 rounded-full" style={{backgroundColor: formTheme.surface, opacity: 0.12, filter: 'blur(48px)'}} />
       </div>
       <div className={strictSessionActive ? 'mx-auto min-h-screen w-full max-w-6xl py-6 px-4' : 'max-w-3xl mx-auto py-10 px-4'}>
-        {formTheme.coverImage ? (
-          <div className="mb-5 overflow-hidden rounded-xl border border-gray-200">
-            <img src={formTheme.coverImage} alt="Portada del formulario" className="h-44 w-full object-cover" />
+          {formTheme.coverImage ? (
+            <div className="mb-6 overflow-hidden rounded-xl shadow-lg shadow-black/40" style={{ border: `1px solid ${panelBorder}` }}>
+              <img src={formTheme.coverImage} alt="Portada del formulario" className="h-52 w-full object-cover" />
+            </div>
+          ) : null}
+          <div className="mb-9">
+            <h1 className="mb-2 text-4xl font-black leading-tight" style={{ color: formTheme.primary, textShadow: isSurfaceDark ? '0 1px 10px rgba(0,0,0,0.35)' : 'none' }}>
+              {form.title}
+            </h1>
+            <p className="text-base leading-relaxed" style={{ color: textSecondary }}>{form.description}</p>
           </div>
-        ) : null}
-        <h1 className="text-3xl font-bold mb-2" style={{color: formTheme.primary}}>{form.title}</h1>
-        <p className="mb-6 text-gray-600">{form.description}</p>
         {isStrictMode && !strictStarted ? (
-          <section className="mb-8 rounded-2xl border border-red-200 bg-white/90 p-6 shadow">
-            <h2 className="text-xl font-bold text-red-700">Modo estricto</h2>
+          <section className="mb-8 rounded-2xl p-6 shadow-xl shadow-black/35 backdrop-blur-sm" style={{ border: `1px solid ${hexToRgba('#f43f5e', 0.35)}`, backgroundColor: panelBg }}>
+            <h2 className="text-xl font-bold text-rose-300">Modo estricto</h2>
             {strictWindowStatus === 'not_started' ? (
-              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-700">
+              <div className="mt-3 rounded-lg border border-amber-400/35 bg-amber-500/15 px-3 py-2 text-sm font-semibold text-amber-200">
                 Este examen aun no ha comenzado. Inicia en {formatMsAsCountdown(strictTimeUntilStartMs)}.
               </div>
             ) : null}
             {strictWindowStatus === 'in_progress' ? (
-              <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">
+              <div className="mt-3 rounded-lg border border-emerald-400/35 bg-emerald-500/15 px-3 py-2 text-sm font-semibold text-emerald-200">
                 Estado: En curso.
               </div>
             ) : null}
             {strictWindowStatus === 'finished' ? (
-              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
+              <div className="mt-3 rounded-lg border border-rose-400/35 bg-rose-500/15 px-3 py-2 text-sm font-semibold text-rose-200">
                 Este examen ya finalizo.
               </div>
             ) : null}
-            <p className="mt-3 text-sm text-gray-700">Asegurate de no salir de esta pestana durante el examen.</p>
-            <p className="mt-2 text-sm text-gray-700">Cualquier actividad sospechosa se detectara y se mandara al propietario del formulario.</p>
-            <p className="mt-2 text-sm text-gray-700">Al comenzar, se intentara activar pantalla completa.</p>
+            <p className="mt-3 text-sm" style={{ color: textSecondary }}>Asegurate de no salir de esta pestana durante el examen.</p>
+            <p className="mt-2 text-sm" style={{ color: textSecondary }}>Cualquier actividad sospechosa se detectara y se mandara al propietario del formulario.</p>
+            <p className="mt-2 text-sm" style={{ color: textSecondary }}>Al comenzar, se intentara activar pantalla completa.</p>
             {strictDurationEnabled ? (
-              <p className="mt-2 text-sm font-semibold text-amber-700">Duracion por usuario: {strictDurationMinutes} min (por cuenta logueada).</p>
+              <p className="mt-2 text-sm font-semibold text-amber-200">Duracion por usuario: {strictDurationMinutes} min (por cuenta logueada).</p>
             ) : null}
             {strictWindowEnabled ? (
-              <p className="mt-2 text-sm text-gray-700">
+              <p className="mt-2 text-sm" style={{ color: textMuted }}>
                 Ventana habilitada: {strictStartsAt ? strictStartsAt.toLocaleString() : 'sin inicio'} - {strictEndsAt ? strictEndsAt.toLocaleString() : 'sin fin'}
               </p>
             ) : null}
@@ -951,12 +1091,12 @@ function FormPublicView() {
         ) : null}
 
         {strictSessionActive ? (
-          <div className="mb-4 rounded-xl border border-gray-200 bg-white/80 p-4">
-            <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <div className="mb-4 rounded-xl p-4 shadow-lg shadow-black/30 backdrop-blur-sm" style={{ border: `1px solid ${panelBorder}`, backgroundColor: panelBg }}>
+            <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide" style={{ color: textSecondary }}>
               <span>Modo estricto</span>
               <span>{safeStrictStep + 1} / {strictQuestionCount || 1}</span>
             </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
+            <div className="h-2 w-full overflow-hidden rounded-full" style={{ backgroundColor: hexToRgba(formTheme.accent, 0.25) }}>
               <div
                 className="h-full transition-all"
                 style={{
@@ -967,36 +1107,36 @@ function FormPublicView() {
             </div>
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <span className="rounded-md bg-red-100 px-2 py-1 text-xs font-semibold text-red-700">Advertencias: {strictWarningCount}</span>
+              <span className="rounded-md border border-rose-400/40 bg-rose-500/15 px-2 py-1 text-xs font-semibold text-rose-200">Advertencias: {strictWarningCount}</span>
               {strictDurationRemaining !== null ? (
-                <span className="rounded-md bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-700">Tiempo restante: {formatSeconds(strictDurationRemaining)}</span>
+                <span className="rounded-md border border-sky-400/40 bg-sky-500/15 px-2 py-1 text-xs font-semibold text-sky-200">Tiempo restante: {formatSeconds(strictDurationRemaining)}</span>
               ) : null}
               {strictWindowRemainingMs !== null ? (
-                <span className="rounded-md bg-purple-100 px-2 py-1 text-xs font-semibold text-purple-700">
+                <span className="rounded-md border border-violet-400/40 bg-violet-500/15 px-2 py-1 text-xs font-semibold text-violet-200">
                   Ventana global restante: {formatMsAsCountdown(strictWindowRemainingMs)}
                 </span>
               ) : null}
               {Array.from({ length: Math.min(strictWarningCount, 12) }, (_, idx) => (
-                <span key={`strict-warn-${idx}`} className="rounded-md border border-red-300 bg-white px-2 py-0.5 text-xs font-bold text-red-700">[!]</span>
+                <span key={`strict-warn-${idx}`} className="rounded-md border border-rose-400/40 bg-rose-500/10 px-2 py-0.5 text-xs font-bold text-rose-200">[!]</span>
               ))}
             </div>
 
             {strictReturnCountdown !== null ? (
-              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-700">
+              <div className="mt-3 rounded-lg border border-amber-400/35 bg-amber-500/15 px-3 py-2 text-sm font-semibold text-amber-200">
                 {strictReturnCountdownActive
                   ? `Tienes ${strictReturnCountdown}s para volver a esta pantalla.`
                   : `Temporizador en pausa: ${strictReturnCountdown}s restantes.`}
               </div>
             ) : null}
 
-            <div className="mt-3 rounded-lg border border-red-200 bg-white p-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Logs de actividad sospechosa</p>
+            <div className="mt-3 rounded-lg border border-rose-400/35 p-3" style={{ backgroundColor: inputBg }}>
+              <p className="text-xs font-semibold uppercase tracking-wide text-rose-300">Logs de actividad sospechosa</p>
               {strictSuspiciousEvents.length === 0 ? (
-                <p className="mt-2 text-xs text-gray-500">Sin eventos detectados.</p>
+                <p className="mt-2 text-xs" style={{ color: textMuted }}>Sin eventos detectados.</p>
               ) : (
-                <ul className="mt-2 max-h-40 space-y-1 overflow-auto text-xs text-gray-700">
+                <ul className="mt-2 max-h-40 space-y-1 overflow-auto text-xs" style={{ color: textSecondary }}>
                   {[...strictSuspiciousEvents].slice(-8).reverse().map((event, index) => (
-                    <li key={`${event.at}-${event.reason}-${index}`} className="rounded border border-red-100 bg-red-50 px-2 py-1">
+                    <li key={`${event.at}-${event.reason}-${index}`} className="rounded border border-rose-400/30 bg-rose-500/10 px-2 py-1">
                       [!] {new Date(event.at).toLocaleTimeString()} - {getStrictReasonLabel(event.reason)}
                     </li>
                   ))}
@@ -1008,61 +1148,65 @@ function FormPublicView() {
 
         {sectionsToRender.map((section, idx) => (
           <section key={section.id} className="mb-8">
-            <h2 className="text-xl font-semibold mb-2" style={{color: formTheme.accent}}>{section.title}</h2>
-            <p className="mb-2 text-gray-500">{section.description}</p>
+            <h2 className="mb-2 text-2xl font-bold" style={{color: formTheme.accent}}>{section.title}</h2>
+            <p className="mb-3 text-base" style={{ color: textSecondary }}>{section.description}</p>
             <div className="space-y-6">
-              {section.questions.map(question => (
-                <div key={question.id} className="p-4 rounded-2xl shadow border border-gray-100" style={{backgroundColor: formTheme.surface}}>
-                  <div className="font-medium mb-1 text-gray-900">
+              {section.questions.map((question, questionIndex) => (
+                <article
+                  key={question.id}
+                  className="space-y-3 py-4"
+                  style={questionIndex < section.questions.length - 1 ? { borderBottom: `1px solid ${hexToRgba(formTheme.accent, 0.2)}` } : undefined}
+                >
+                  <div className="mb-1 text-[1.35rem] font-bold leading-snug" style={{ color: textPrimary }}>
                     {question.title}
                     {isQuestionRequired(question) ? <span className="ml-1 text-red-600">*</span> : null}
                   </div>
-                  <div className="text-sm text-gray-500 mb-2">{question.description}</div>
+                  <div className="mb-3 text-base leading-relaxed" style={{ color: textSecondary }}>{question.description}</div>
                   {/* Renderizado de todos los tipos */}
                   {question.type === 'short_answer' && (
-                    <input className="w-full border rounded px-3 py-2" type="text" placeholder="Respuesta corta"
+                    <input className={inputBaseClass} style={inputBaseStyle} type="text" placeholder="Respuesta corta"
                       value={responses[question.id] || ''}
                       onChange={e => handleResponse(question.id, e.target.value)} />
                   )}
                   {question.type === 'paragraph' && (
-                    <textarea className="w-full border rounded px-3 py-2" rows={3} placeholder="Respuesta larga"
+                    <textarea className={inputBaseClass} style={inputBaseStyle} rows={3} placeholder="Respuesta larga"
                       value={responses[question.id] || ''}
                       onChange={e => handleResponse(question.id, e.target.value)} />
                   )}
                   {question.type === 'number' && (
-                    <input className="w-full border rounded px-3 py-2" type="number" placeholder="123"
+                    <input className={inputBaseClass} style={inputBaseStyle} type="number" placeholder="123"
                       value={responses[question.id] || ''}
                       onChange={e => handleResponse(question.id, e.target.value)} />
                   )}
                   {question.type === 'email' && (
-                    <input className="w-full border rounded px-3 py-2" type="email" placeholder="correo@ejemplo.com"
+                    <input className={inputBaseClass} style={inputBaseStyle} type="email" placeholder="correo@ejemplo.com"
                       value={responses[question.id] || ''}
                       onChange={e => handleResponse(question.id, e.target.value)} />
                   )}
                   {question.type === 'url' && (
-                    <input className="w-full border rounded px-3 py-2" type="url" placeholder="https://..."
+                    <input className={inputBaseClass} style={inputBaseStyle} type="url" placeholder="https://..."
                       value={responses[question.id] || ''}
                       onChange={e => handleResponse(question.id, e.target.value)} />
                   )}
                   {question.type === 'phone' && (
-                    <input className="w-full border rounded px-3 py-2" type="tel" placeholder="Teléfono"
+                    <input className={inputBaseClass} style={inputBaseStyle} type="tel" placeholder="Telefono"
                       value={responses[question.id] || ''}
                       onChange={e => handleResponse(question.id, e.target.value)} />
                   )}
                   {question.type === 'date' && (
-                    <input className="w-full border rounded px-3 py-2" type="date"
+                    <input className={inputBaseClass} style={inputBaseStyle} type="date"
                       value={responses[question.id] || ''}
                       onChange={e => handleResponse(question.id, e.target.value)} />
                   )}
                   {question.type === 'time' && (
-                    <input className="w-full border rounded px-3 py-2" type="time"
+                    <input className={inputBaseClass} style={inputBaseStyle} type="time"
                       value={responses[question.id] || ''}
                       onChange={e => handleResponse(question.id, e.target.value)} />
                   )}
                   {question.type === 'multiple_choice' && (
                     <div className="space-y-1">
                       {(question.options || []).map((opt, idx) => (
-                        <label key={idx} className="flex items-center gap-2">
+                        <label key={idx} className="flex items-center gap-2" style={{ color: textPrimary }}>
                           <input type="checkbox" checked={Array.isArray(responses[question.id]) && responses[question.id].includes(idx)}
                             onChange={() => handleCheckbox(question.id, idx)} /> {opt || `Opción ${idx + 1}`}
                         </label>
@@ -1072,7 +1216,7 @@ function FormPublicView() {
                   {question.type === 'checkboxes' && (
                     <div className="space-y-1">
                       {(question.options || []).map((opt, idx) => (
-                        <label key={idx} className="flex items-center gap-2">
+                        <label key={idx} className="flex items-center gap-2" style={{ color: textPrimary }}>
                           <input type="checkbox" checked={Array.isArray(responses[question.id]) && responses[question.id].includes(idx)}
                             onChange={() => handleCheckbox(question.id, idx)} /> {opt || `Opción ${idx + 1}`}
                         </label>
@@ -1080,7 +1224,7 @@ function FormPublicView() {
                     </div>
                   )}
                   {question.type === 'dropdown' && (
-                    <select className="w-full border rounded px-3 py-2"
+                    <select className={inputBaseClass} style={inputBaseStyle}
                       value={responses[question.id] ?? ''}
                       onChange={e => handleResponse(question.id, Number(e.target.value))}>
                       <option value="" disabled>Selecciona una opción</option>
@@ -1092,7 +1236,7 @@ function FormPublicView() {
                   {question.type === 'choice_unique' && (
                     <div className="space-y-2">
                       {(question.options || []).map((opt, idx) => (
-                        <label key={idx} className="flex items-center gap-2">
+                        <label key={idx} className="flex items-center gap-2" style={{ color: textPrimary }}>
                           <input type="radio" name={`choice-${question.id}`} checked={Number(responses[question.id]) === idx}
                             onChange={() => handleResponse(question.id, idx)} /> {opt || `Opción ${idx + 1}`}
                         </label>
@@ -1101,12 +1245,12 @@ function FormPublicView() {
                   )}
                   {question.type === 'linear_scale' && (
                     <div className="space-y-3">
-                      <div className="flex justify-between text-xs text-gray-500">
+                      <div className="flex justify-between text-xs" style={{ color: textMuted }}>
                         <span>Bajo</span><span>Alto</span>
                       </div>
                       <div className="flex items-center justify-between gap-2">
                         {Array.from({ length: (question.scaleMax || 5) - (question.scaleMin || 1) + 1 }, (_, i) => (question.scaleMin || 1) + i).map((val) => (
-                          <label key={val} className="flex flex-col items-center gap-1 text-xs">
+                          <label key={val} className="flex flex-col items-center gap-1 text-xs" style={{ color: textPrimary }}>
                             <input type="radio" name={`ls-${question.id}`} checked={responses[question.id] === val}
                               onChange={() => handleResponse(question.id, val)} />
                             {val}
@@ -1121,8 +1265,10 @@ function FormPublicView() {
                         const value = idx + 1;
                         const selected = responses[question.id] === value;
                         return (
-                          <button key={value} type="button" onClick={() => handleResponse(question.id, value)}
-                            className={`rounded-lg border px-2 py-1 transition ${selected ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}>{emoji}</button>
+                          <button key={value} type="button" onClick={() => handleResponse(question.id, value)} className="rounded-lg border px-2 py-1 transition"
+                            style={selected
+                              ? { borderColor: formTheme.primary, backgroundColor: hexToRgba(formTheme.primary, 0.22) }
+                              : { borderColor: inputBorder, backgroundColor: inputBg }}>{emoji}</button>
                         );
                       })}
                     </div>
@@ -1141,7 +1287,7 @@ function FormPublicView() {
                   )}
                   {question.type === 'ranking' && (
                     <div className="space-y-2">
-                      <p className="text-xs text-gray-500">Arrastra y suelta para reordenar.</p>
+                      <p className="text-xs" style={{ color: textMuted }}>Arrastra y suelta para reordenar.</p>
                       {(() => {
                         const order = getNormalizedRankingOrder(question.id, question.options);
 
@@ -1153,12 +1299,13 @@ function FormPublicView() {
                           onDragOver={handleRankingDragOver}
                           onDrop={() => handleRankingDrop(question.id, pos, question.options)}
                           onDragEnd={handleRankingDragEnd}
-                          className="flex cursor-grab items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 active:cursor-grabbing"
+                          className="flex cursor-grab items-center gap-2 rounded-lg px-3 py-2 active:cursor-grabbing"
+                          style={{ border: `1px solid ${inputBorder}`, backgroundColor: inputBg }}
                         >
-                          <span className="w-6 text-sm font-semibold text-gray-500">{pos + 1}</span>
-                          <span className="flex-1 text-sm text-gray-700">{question.options[optIdx] || `Opción ${optIdx + 1}`}</span>
-                          <button type="button" disabled={pos === 0} onClick={() => handleRankingMove(question.id, pos, -1, question.options)} className="rounded border border-gray-200 px-2 py-1 text-xs transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40">Subir</button>
-                          <button type="button" disabled={pos === arr.length - 1} onClick={() => handleRankingMove(question.id, pos, 1, question.options)} className="rounded border border-gray-200 px-2 py-1 text-xs transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40">Bajar</button>
+                          <span className="w-6 text-sm font-semibold" style={{ color: textMuted }}>{pos + 1}</span>
+                          <span className="flex-1 text-sm" style={{ color: textPrimary }}>{question.options[optIdx] || `Opción ${optIdx + 1}`}</span>
+                          <button type="button" disabled={pos === 0} onClick={() => handleRankingMove(question.id, pos, -1, question.options)} className="rounded px-2 py-1 text-xs transition disabled:cursor-not-allowed disabled:opacity-40" style={{ border: `1px solid ${inputBorder}`, backgroundColor: panelBg, color: textSecondary }}>Subir</button>
+                          <button type="button" disabled={pos === arr.length - 1} onClick={() => handleRankingMove(question.id, pos, 1, question.options)} className="rounded px-2 py-1 text-xs transition disabled:cursor-not-allowed disabled:opacity-40" style={{ border: `1px solid ${inputBorder}`, backgroundColor: panelBg, color: textSecondary }}>Bajar</button>
                         </div>
                       ))
                       })()}
@@ -1167,13 +1314,13 @@ function FormPublicView() {
                   {fieldErrors[question.id] ? (
                     <p className="mt-2 text-sm font-medium text-red-600">{fieldErrors[question.id]}</p>
                   ) : null}
-                </div>
+                </article>
               ))}
             </div>
           </section>
         ))}
         {/* Navegación / Envío */}
-        <div className="max-w-3xl mx-auto py-6 px-4">
+        <div className="max-w-3xl mx-auto py-6 px-1">
           {strictSessionActive ? (
             <div className="flex flex-wrap items-center gap-3">
               <button
@@ -1183,7 +1330,8 @@ function FormPublicView() {
                   setSubmitMsg('');
                   setStrictStep((current) => Math.max(0, current - 1));
                 }}
-                className="rounded-xl border border-gray-300 bg-white px-5 py-2 text-sm font-semibold text-gray-700 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-xl px-5 py-2 text-sm font-semibold transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ border: `1px solid ${inputBorder}`, backgroundColor: panelBg, color: textPrimary }}
               >
                 Anterior
               </button>
@@ -1205,25 +1353,30 @@ function FormPublicView() {
               ) : (
                 <button
                   type="button"
-                  disabled={submitting || (strictDurationRemaining !== null && strictDurationRemaining <= 0)}
+                  disabled={submitting || !activeSession?.user?.id || (strictDurationRemaining !== null && strictDurationRemaining <= 0)}
                   onClick={() => {
                     if (!validateRequiredQuestion(strictQuestion)) return;
                     handleSubmit();
                   }}
-                  className="rounded-xl px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-xl px-5 cursor-pointer py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
                   style={{backgroundImage: `linear-gradient(90deg, ${formTheme.primary}, ${formTheme.accent})`}}
                 >
-                  Enviar respuestas
+                  Enviar 
                 </button>
               )}
             </div>
           ) : !isStrictMode ? (
-            <button disabled={submitting} onClick={handleSubmit} className="rounded-xl px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-gray-300" style={{backgroundImage: `linear-gradient(90deg, ${formTheme.primary}, ${formTheme.accent})`}}>
-              Enviar respuestas
-            </button>
+            <div className="flex justify-end">
+              <button disabled={submitting || !activeSession?.user?.id} onClick={handleSubmit} className="cursor-pointer rounded-xl px-10 py-2  font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-gray-300" style={{backgroundImage: `linear-gradient(90deg, ${formTheme.primary}, ${formTheme.accent})`}}>
+                Enviar 
+              </button>
+            </div>
+          ) : null}
+          {!activeSession?.user?.id ? (
+            <p className="mt-3 text-sm" style={{ color: textMuted }}>Debes iniciar sesion para enviar respuestas.</p>
           ) : null}
           {submitMsg && (
-            <div className={`mt-3 font-semibold ${Object.keys(fieldErrors).length > 0 || submitMsg.toLowerCase().includes('error') ? 'text-red-700' : 'text-emerald-700'}`}>
+            <div className={`mt-3 font-semibold ${Object.keys(fieldErrors).length > 0 || submitMsg.toLowerCase().includes('error') ? 'text-rose-300' : 'text-emerald-300'}`}>
               {submitMsg}
             </div>
           )}
