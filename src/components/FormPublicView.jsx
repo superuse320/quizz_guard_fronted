@@ -115,23 +115,30 @@ function FormPublicView() {
   const [strictSessionStartedAtMs, setStrictSessionStartedAtMs] = useState(null);
   const [activeSession, setActiveSession] = useState(null);
   const [alreadySubmitted, setAlreadySubmitted] = useState(false);
+  const [alreadySubmittedAt, setAlreadySubmittedAt] = useState(null);
   const [completedView, setCompletedView] = useState(false);
   const strictLastEventRef = useRef(0);
   const wakeLockRef = useRef(null);
   const strictClosingRef = useRef(false);
 
   const checkUserAlreadySubmitted = async (formId, userId) => {
-    if (!formId || !userId) return false;
+    if (!formId || !userId) return { hasSubmission: false, submittedAt: null };
     const { data, error } = await supabase
       .from('form_submissions')
-      .select('id')
+      .select('id, submitted_at, created_at')
       .eq('form_id', formId)
       .eq('respondent_user_id', userId)
       .eq('status', 'submitted')
+      .order('submitted_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
       .limit(1);
 
-    if (error) return false;
-    return Array.isArray(data) && data.length > 0;
+    if (error) return { hasSubmission: false, submittedAt: null };
+    const row = Array.isArray(data) && data.length > 0 ? data[0] : null;
+    return {
+      hasSubmission: Boolean(row),
+      submittedAt: row?.submitted_at || row?.created_at || null,
+    };
   };
 
   // Handler para actualizar respuestas
@@ -465,9 +472,10 @@ function FormPublicView() {
 
     setActiveSession(userSession);
 
-    const hasSubmission = await checkUserAlreadySubmitted(form.id, userSession.user.id);
-    if (hasSubmission) {
+    const submissionCheck = await checkUserAlreadySubmitted(form.id, userSession.user.id);
+    if (submissionCheck.hasSubmission) {
       setAlreadySubmitted(true);
+      setAlreadySubmittedAt(submissionCheck.submittedAt);
       setSubmitMsg('Ya has respondido este formulario anteriormente.');
       return;
     }
@@ -524,6 +532,7 @@ function FormPublicView() {
         .catch(() => {});
 
       setAlreadySubmitted(true);
+      setAlreadySubmittedAt(nowIso);
       setSubmitMsg('Tu intento fue cerrado por salir del examen. No puedes volver a entrar.');
       return;
     }
@@ -618,9 +627,10 @@ function FormPublicView() {
     }
 
     if (!forcedReason) {
-      const hasSubmission = await checkUserAlreadySubmitted(form.id, userSession.user.id);
-      if (hasSubmission) {
+      const submissionCheck = await checkUserAlreadySubmitted(form.id, userSession.user.id);
+      if (submissionCheck.hasSubmission) {
         setAlreadySubmitted(true);
+        setAlreadySubmittedAt(submissionCheck.submittedAt);
         setSubmitMsg('Ya has respondido este formulario anteriormente.');
         return;
       }
@@ -834,10 +844,12 @@ function FormPublicView() {
       setActiveSession(session);
 
       if (formData?.id && session?.user?.id) {
-        const hasSubmission = await checkUserAlreadySubmitted(formData.id, session.user.id);
-        setAlreadySubmitted(hasSubmission);
+        const submissionCheck = await checkUserAlreadySubmitted(formData.id, session.user.id);
+        setAlreadySubmitted(submissionCheck.hasSubmission);
+        setAlreadySubmittedAt(submissionCheck.submittedAt);
       } else {
         setAlreadySubmitted(false);
+        setAlreadySubmittedAt(null);
       }
 
       setLoading(false);
@@ -858,6 +870,7 @@ function FormPublicView() {
     setStrictSessionStartedAtMs(null);
     setCompletedView(false);
     setAlreadySubmitted(false);
+    setAlreadySubmittedAt(null);
     strictLastEventRef.current = 0;
     releaseWakeLock();
     releaseKeyboardLock();
@@ -1205,18 +1218,23 @@ function FormPublicView() {
           <div className="absolute -right-20 bottom-0 h-72 w-72 rounded-full bg-orange-500/15 blur-3xl" />
         </div>
         <section className="relative mx-auto flex min-h-[70vh] w-full max-w-3xl items-center justify-center">
-          <div className="w-full rounded-2xl border border-amber-300/25 bg-amber-500/10 px-6 py-8 text-center sm:px-10">
+          <div className="w-full rounded-2xl border border-amber-300/25 bg-amber-500/10 px-6 py-7 text-center sm:px-9">
             <p className="inline-flex rounded-full border border-amber-300/35 bg-amber-400/15 px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] text-amber-100">
               Estado del envio
             </p>
-            <h1 className="mt-4 text-4xl font-black leading-tight text-amber-100 sm:text-6xl">Ya respondiste este formulario</h1>
-            <h2 className="mt-3 text-lg font-semibold text-white sm:text-2xl">{form?.title || 'Formulario'}</h2>
+            <h1 className="mt-4 text-3xl font-black leading-tight text-amber-100 sm:text-4xl">Ya respondiste este formulario</h1>
+            <h2 className="mt-3 text-base font-semibold text-white sm:text-xl">{form?.title || 'Formulario'}</h2>
             <div className="mx-auto mt-6 h-px w-36 bg-amber-300/50" />
-            <p className="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-slate-100 sm:text-lg">
+            <p className="mx-auto mt-6 max-w-2xl text-sm leading-relaxed text-slate-100 sm:text-base">
               {form?.form_mode === 'strict'
                 ? 'Este examen permite un solo intento. Si sales de la pagina, el intento se cierra y no puedes volver a entrar.'
                 : 'Tu cuenta ya registro una respuesta para este formulario. Solo se permite un envio por usuario.'}
             </p>
+            {alreadySubmittedAt ? (
+              <p className="mx-auto mt-3 max-w-2xl text-xs font-semibold uppercase tracking-[0.08em] text-amber-200/90 sm:text-sm">
+                Respondido el {new Date(alreadySubmittedAt).toLocaleString()}
+              </p>
+            ) : null}
             <Link
               to="/"
               className="mx-auto mt-8 inline-flex rounded-lg border border-amber-300/35 bg-amber-500/10 px-5 py-2 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/20"
