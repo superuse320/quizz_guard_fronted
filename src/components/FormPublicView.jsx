@@ -1,6 +1,6 @@
 
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 
 const parseThemeValue = (value) => {
@@ -105,6 +105,7 @@ function FormPublicView() {
   const [strictSubmissionId, setStrictSubmissionId] = useState(null);
   const [strictDurationRemaining, setStrictDurationRemaining] = useState(null);
   const [strictDurationActive, setStrictDurationActive] = useState(false);
+  const [strictStarting, setStrictStarting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [strictWarningCount, setStrictWarningCount] = useState(0);
   const [strictSuspiciousEvents, setStrictSuspiciousEvents] = useState([]);
@@ -431,6 +432,11 @@ function FormPublicView() {
   };
 
   const startStrictSession = async () => {
+    if (strictStarting) return;
+    setStrictStarting(true);
+
+    try {
+
     const strictConfig = form?.strict_config && typeof form.strict_config === 'object' ? form.strict_config : {};
     const durationEnabled = Boolean(strictConfig.duration_enabled);
     const durationMinutes = Math.max(1, Number(strictConfig.duration_minutes) || 0);
@@ -553,7 +559,6 @@ function FormPublicView() {
     setStrictDurationRemaining(durationSeconds);
     setStrictDurationActive(Boolean(durationSeconds));
     setStrictSessionStartedAtMs(Date.now());
-    setStrictExitIncidents(0);
 
     setStrictStarted(true);
     setStrictStep(0);
@@ -586,6 +591,11 @@ function FormPublicView() {
       }, { onConflict: 'submission_id' })
       .then(() => {})
       .catch(() => {});
+    } catch {
+      setSubmitMsg('No se pudo iniciar el examen en este momento. Intenta nuevamente.');
+  } finally {
+    setStrictStarting(false);
+    }
   };
 
   // Enviar respuestas (real)
@@ -818,34 +828,22 @@ function FormPublicView() {
         return next;
       });
 
+      // Antes de mostrar el formulario, validar si el usuario ya respondio.
+      const { data: sessionData } = await supabase.auth.getSession();
+      const session = sessionData?.session || null;
+      setActiveSession(session);
+
+      if (formData?.id && session?.user?.id) {
+        const hasSubmission = await checkUserAlreadySubmitted(formData.id, session.user.id);
+        setAlreadySubmitted(hasSubmission);
+      } else {
+        setAlreadySubmitted(false);
+      }
+
       setLoading(false);
     }
     fetchForm();
   }, [public_id]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function syncSessionAndSubmission() {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const session = sessionData?.session || null;
-      if (cancelled) return;
-
-      setActiveSession(session);
-
-      if (form?.id && session?.user?.id) {
-        const hasSubmission = await checkUserAlreadySubmitted(form.id, session.user.id);
-        if (!cancelled) setAlreadySubmitted(hasSubmission);
-      } else if (!session?.user?.id) {
-        setAlreadySubmitted(false);
-      }
-    }
-
-    syncSessionAndSubmission();
-    return () => {
-      cancelled = true;
-    };
-  }, [form?.id]);
 
   useEffect(() => {
     setStrictStep(0);
@@ -1162,7 +1160,20 @@ function FormPublicView() {
     };
   }, [strictSubmissionId, strictStarted]);
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-white bg-black">Cargando formulario...</div>;
+  if (loading) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-white bg-black">
+        <div className="h-12 w-12 rounded-full border-4 border-white/20 border-t-white animate-spin" />
+        <p className="text-sm text-white/80">Cargando...</p>
+        <Link
+          to="/"
+          className="mt-2 rounded-lg border border-white/20 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/10"
+        >
+          Ir a inicio
+        </Link>
+      </div>
+    );
+  }
   if (notFound) return <div className="min-h-screen flex items-center justify-center text-white bg-black">Formulario no encontrado</div>;
   if (blockedByQuizMode) return <div className="min-h-screen flex items-center justify-center text-white bg-black">Este formulario es tipo quiz y no tiene acceso por link publico.</div>;
   if (completedView) {
@@ -1194,15 +1205,24 @@ function FormPublicView() {
           <div className="absolute -right-20 bottom-0 h-72 w-72 rounded-full bg-orange-500/15 blur-3xl" />
         </div>
         <section className="relative mx-auto flex min-h-[70vh] w-full max-w-3xl items-center justify-center">
-          <div className="text-center">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-200/90">Formulario ya respondido</p>
-            <h1 className="mt-4 text-3xl font-black leading-tight text-white sm:text-5xl">{form?.title || 'Formulario'}</h1>
-            <div className="mx-auto mt-6 h-px w-28 bg-amber-300/50" />
-            <p className="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-slate-200/90 sm:text-lg">
+          <div className="w-full rounded-2xl border border-amber-300/25 bg-amber-500/10 px-6 py-8 text-center sm:px-10">
+            <p className="inline-flex rounded-full border border-amber-300/35 bg-amber-400/15 px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] text-amber-100">
+              Estado del envio
+            </p>
+            <h1 className="mt-4 text-4xl font-black leading-tight text-amber-100 sm:text-6xl">Ya respondiste este formulario</h1>
+            <h2 className="mt-3 text-lg font-semibold text-white sm:text-2xl">{form?.title || 'Formulario'}</h2>
+            <div className="mx-auto mt-6 h-px w-36 bg-amber-300/50" />
+            <p className="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-slate-100 sm:text-lg">
               {form?.form_mode === 'strict'
                 ? 'Este examen permite un solo intento. Si sales de la pagina, el intento se cierra y no puedes volver a entrar.'
                 : 'Tu cuenta ya registro una respuesta para este formulario. Solo se permite un envio por usuario.'}
             </p>
+            <Link
+              to="/"
+              className="mx-auto mt-8 inline-flex rounded-lg border border-amber-300/35 bg-amber-500/10 px-5 py-2 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/20"
+            >
+              Ir a inicio
+            </Link>
           </div>
         </section>
       </main>
@@ -1326,7 +1346,6 @@ function FormPublicView() {
               <ul className="mt-2 space-y-1 text-sm" style={{ color: textSecondary }}>
                 <li>- Solo puedes responder una sola vez.</li>
                 <li>- Si sales de esta pagina tienes 30 segundos para volver.</li>
-                <li>- Tienes maximo 5 incidentes; al superar el limite el examen se anula.</li>
                 <li>- Si no regresas en 30 segundos, el examen se anula y no podras volver a entrar.</li>
                 <li>- Toda actividad sospechosa se reporta en tiempo real al propietario.</li>
                 <li>- Debes estar logueado para rendir este examen.</li>
@@ -1343,12 +1362,23 @@ function FormPublicView() {
             <button
               type="button"
               onClick={startStrictSession}
-              disabled={!strictCanStartNow}
+              disabled={!strictCanStartNow || strictStarting}
               className="mt-5 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
               style={{backgroundImage: `linear-gradient(90deg, ${formTheme.primary}, ${formTheme.accent})`}}
             >
-              {strictWindowStatus === 'not_started' ? 'Aun no disponible' : strictWindowStatus === 'finished' ? 'Examen finalizado' : 'Iniciar examen'}
+              {strictWindowStatus === 'not_started'
+                ? 'Aun no disponible'
+                : strictWindowStatus === 'finished'
+                  ? 'Examen finalizado'
+                  : strictStarting
+                    ? 'Iniciando...'
+                    : 'Iniciar examen'}
             </button>
+            {isStrictMode && !strictStarted && submitMsg ? (
+              <p className={`mt-3 text-sm font-semibold ${submitMsg.toLowerCase().includes('error') ? 'text-rose-300' : 'text-amber-200'}`}>
+                {submitMsg}
+              </p>
+            ) : null}
           </section>
         ) : null}
 

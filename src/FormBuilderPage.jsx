@@ -3151,17 +3151,19 @@ function FormBuilderPage(props) {
                 </div>
               ) : null}
 
-              <button
-                type="button"
-                onClick={() => {
-                  if (!controlPanelPublicId) return
-                  navigate(`/form/${controlPanelPublicId}/strict-control`)
-                }}
-                disabled={!controlPanelPublicId}
-                className="mt-3 w-full rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:bg-slate-600"
-              >
-                Abrir monitor en tiempo real
-              </button>
+              {formStatus === 'published' ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!controlPanelPublicId) return
+                    navigate(`/form/${controlPanelPublicId}/strict-control`)
+                  }}
+                  disabled={!controlPanelPublicId}
+                  className="mt-3 w-full rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:bg-slate-600"
+                >
+                  Abrir monitor en tiempo real
+                </button>
+              ) : null}
 
             </>
           ) : null}
