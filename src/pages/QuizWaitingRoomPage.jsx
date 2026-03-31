@@ -21,6 +21,7 @@ export default function QuizWaitingRoomPage() {
   const [showCountdown, setShowCountdown] = useState(false);
   
   const realtimeSubscriptionRef = useRef(null);
+  const participantsPollRef = useRef(null);
   const countdownStartedRef = useRef(false);
   const preloadedQuizDataRef = useRef(null);
   const preloadingQuizRef = useRef(false);
@@ -50,10 +51,20 @@ export default function QuizWaitingRoomPage() {
     // Suscribirse a cambios en tiempo real
     subscribeToRealtimeUpdates();
 
+    // Fallback para no perder altas si el canal se demora o falla.
+    participantsPollRef.current = setInterval(() => {
+      if (!countdownStartedRef.current) {
+        loadParticipantsList();
+      }
+    }, 2500);
+
     return () => {
       // Limpiar suscripción al desmontar
       if (realtimeSubscriptionRef.current) {
         realtimeSubscriptionRef.current.unsubscribe();
+      }
+      if (participantsPollRef.current) {
+        clearInterval(participantsPollRef.current);
       }
     };
   }, [sessionId, participantId, formId, navigate]);
@@ -156,7 +167,11 @@ export default function QuizWaitingRoomPage() {
           loadParticipantsList();
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          loadParticipantsList();
+        }
+      });
 
     realtimeSubscriptionRef.current = {
       unsubscribe: () => {

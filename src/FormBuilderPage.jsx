@@ -1571,31 +1571,54 @@ function FormBuilderPage(props) {
 
       if (formId) {
         if (editMode && public_id) {
-          await supabase.from('form_question_options').delete().in('question_id',
-            (await supabase.from('form_questions').select('id').eq('form_id', formId)).data.map((q) => q.id),
-          )
-          await supabase.from('form_questions').delete().eq('form_id', formId)
-          await supabase.from('form_sections').delete().eq('form_id', formId)
+          const { data: existingQuestions } = await supabase
+            .from('form_questions')
+            .select('id')
+            .eq('form_id', formId)
+
+          const existingQuestionIds = (existingQuestions || []).map((q) => q.id)
+
+          if (existingQuestionIds.length > 0) {
+            await supabase
+              .from('form_question_options')
+              .delete()
+              .in('question_id', existingQuestionIds)
+          }
+
+          await Promise.all([
+            supabase.from('form_questions').delete().eq('form_id', formId),
+            supabase.from('form_sections').delete().eq('form_id', formId),
+          ])
         }
 
         const sectionMap = new Map()
-        let sectionPosition = 1
+        const sectionsPayload = []
         for (let section = 1; section <= sectionCount; section += 1) {
           const sectionId = uuidv4()
           sectionMap.set(section, sectionId)
-          await supabase.from('form_sections').insert({
+          sectionsPayload.push({
             id: sectionId,
             form_id: formId,
             title: `Sección ${section}`,
             description: '',
-            position: sectionPosition++,
+            position: section,
           })
         }
+
+        if (sectionsPayload.length > 0) {
+          const { error: sectionsInsertError } = await supabase
+            .from('form_sections')
+            .insert(sectionsPayload)
+          if (sectionsInsertError) throw sectionsInsertError
+        }
+
+        const questionsPayload = []
+        const optionsPayload = []
 
         for (let idx = 0; idx < questions.length; idx += 1) {
           const q = questions[idx]
           const questionId = uuidv4()
-          await supabase.from('form_questions').insert({
+          questionsPayload.push({
             id: questionId,
             form_id: formId,
             section_id: sectionMap.get(q.section || 1),
@@ -1603,11 +1626,11 @@ function FormBuilderPage(props) {
             type: q.type,
             title: q.title,
             description: q.description,
-            required: q.required,
-            required_condition_enabled: q.requiredConditionEnabled,
+            required: Boolean(q.required),
+            required_condition_enabled: Boolean(q.requiredConditionEnabled),
             required_condition_question_id: null,
             required_condition_operator: '=',
-            required_condition_value: q.requiredConditionValue,
+            required_condition_value: q.requiredConditionValue ?? null,
             points: q.points,
             settings: {
               short_answer_correct: q.type === 'short_answer' ? (q.shortAnswerCorrect || '').trim() : null,
@@ -1620,7 +1643,7 @@ function FormBuilderPage(props) {
 
           if (Array.isArray(q.options) && q.options.length > 0) {
             for (let optIdx = 0; optIdx < q.options.length; optIdx += 1) {
-              await supabase.from('form_question_options').insert({
+              optionsPayload.push({
                 id: uuidv4(),
                 question_id: questionId,
                 position: optIdx + 1,
@@ -1631,6 +1654,23 @@ function FormBuilderPage(props) {
               })
             }
           }
+        }
+
+        if (questionsPayload.length > 0) {
+          const { error: questionsInsertError } = await supabase
+            .from('form_questions')
+            .insert(questionsPayload)
+          if (questionsInsertError) throw questionsInsertError
+        }
+
+        // Insertar opciones en lotes para evitar payloads gigantes en formularios largos.
+        const optionBatchSize = 250
+        for (let start = 0; start < optionsPayload.length; start += optionBatchSize) {
+          const batch = optionsPayload.slice(start, start + optionBatchSize)
+          const { error: optionsInsertError } = await supabase
+            .from('form_question_options')
+            .insert(batch)
+          if (optionsInsertError) throw optionsInsertError
         }
       }
 

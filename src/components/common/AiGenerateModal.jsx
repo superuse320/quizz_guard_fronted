@@ -16,6 +16,7 @@ export default function AiGenerateModal({
     const [regenQuestionNumber, setRegenQuestionNumber] = useState(1)
     const [regenInstruction, setRegenInstruction] = useState('')
     const [showRegenPopup, setShowRegenPopup] = useState(false)
+    const [regeneratingQuestionIndex, setRegeneratingQuestionIndex] = useState(null)
 
     const [generateQuiz, { isLoading: generatingWithAi }] = useGenerateQuizMutation()
     const [regenerateQuestion, { isLoading: regeneratingQuestion }] = useRegenerateQuestionMutation()
@@ -93,6 +94,9 @@ export default function AiGenerateModal({
         }
 
         setError('')
+        const targetIndex = selectedQuestionIndex
+        setRegeneratingQuestionIndex(targetIndex)
+        setShowRegenPopup(false)
 
         try {
             const regenPayload = {
@@ -151,11 +155,12 @@ export default function AiGenerateModal({
                 }
             }
 
-            setShowRegenPopup(false)
             setRegenInstruction('')
         } catch (apiError) {
             const message = apiError?.data?.mensaje || apiError?.data?.message || apiError?.message
             setError(message || 'No se pudo regenerar la pregunta.')
+        } finally {
+            setRegeneratingQuestionIndex(null)
         }
     }
 
@@ -285,19 +290,39 @@ export default function AiGenerateModal({
                     </aside>
 
                     <section className="relative overflow-hidden rounded-2xl   p-3">
-                        {isBusy ? (
-                            <div className="ai-spark-field flex h-full flex-col items-center justify-center">
-                                <div className="text-6xl">🪄</div>
-                                <p className="mt-4 text-sm tracking-[0.25em] text-primary-300">{generatingWithAi ? 'GENERANDO CUESTIONARIO' : 'REGENERANDO PREGUNTA'}</p>
+                        {generatingWithAi ? (
+                            <div className="ai-spark-field flex h-full flex-col items-center justify-center text-center">
+                                <div className="ai-stars-layer" aria-hidden="true">
+                                    <span className="ai-star ai-star-1" />
+                                    <span className="ai-star ai-star-2" />
+                                    <span className="ai-star ai-star-3" />
+                                    <span className="ai-star ai-star-4" />
+                                    <span className="ai-star ai-star-5" />
+                                    <span className="ai-star ai-star-6" />
+                                    <span className="ai-star ai-star-7" />
+                                    <span className="ai-star ai-star-8" />
+                                    <span className="ai-star ai-star-9" />
+                                </div>
+                                <div className="ai-cloud-layer" aria-hidden="true">
+                                    <span className="ai-cloud ai-cloud-1" />
+                                    <span className="ai-cloud ai-cloud-2" />
+                                </div>
+
+                                <div className="ai-loading-badge">IA trabajando</div>
+                                <p className="mt-4 text-sm font-semibold tracking-[0.18em] text-white/90">
+                                    {generatingWithAi ? 'GENERANDO CUESTIONARIO' : 'REGENERANDO PREGUNTA'}
+                                </p>
+                                <p className="mt-2 text-xs text-white/60">Esto puede tardar unos segundos...</p>
+
                                 <div className="mt-6 flex gap-2">
-                                    <span className="ai-dot h-2 w-2 rounded-full bg-primary-300" />
-                                    <span className="ai-dot ai-dot-delay-1 h-2 w-2 rounded-full bg-primary-300" />
-                                    <span className="ai-dot ai-dot-delay-2 h-2 w-2 rounded-full bg-emerald-300" />
+                                    <span className="ai-dot h-2 w-2 rounded-full bg-white" />
+                                    <span className="ai-dot ai-dot-delay-1 h-2 w-2 rounded-full bg-white" />
+                                    <span className="ai-dot ai-dot-delay-2 h-2 w-2 rounded-full bg-white" />
                                 </div>
                             </div>
                         ) : null}
 
-                        {!isBusy && !previewTemplate ? (
+                        {!generatingWithAi && !previewTemplate ? (
                             <div className="flex h-full items-center justify-center text-center text-gray-400">
                                 <div>
                                     <GenerateAiIcon className={"size-10 inline-block mb-4"} />
@@ -307,7 +332,7 @@ export default function AiGenerateModal({
                             </div>
                         ) : null}
 
-                        {!isBusy && previewTemplate ? (
+                        {!generatingWithAi && previewTemplate ? (
                             <div className="h-full overflow-auto pr-2">
                                 <div className='flex justify-between '>
 
@@ -320,7 +345,18 @@ export default function AiGenerateModal({
 
                                 <div className="space-y-4">
                                     {(previewTemplate.questions || []).map((question, index) => (
-                                        <article key={`home-prev-${question.id || index}`} className={`rounded-xl border p-4 ${index === selectedQuestionIndex ? 'border-primary-400/70 bg-primary-400/10' : 'border-white/15 bg-white/4'}`}>
+                                        <article key={`home-prev-${question.id || index}`} className={`relative overflow-hidden rounded-xl border p-4 ${index === selectedQuestionIndex ? 'border-primary-400/70 bg-primary-400/10' : 'border-white/15 bg-white/4'}`}>
+                                            {regeneratingQuestion && regeneratingQuestionIndex === index ? (
+                                                <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/45">
+                                                    <div className="w-[92%] rounded-lg border border-white/20 bg-black/35 px-4 py-3 text-center backdrop-blur-sm">
+                                                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/80">Regenerando</p>
+                                                        <p className="mt-1 text-sm font-medium text-white">Esta pregunta se esta regenerando con IA...</p>
+                                                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
+                                                            <div className="ai-card-shimmer h-full w-full" />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ) : null}
                                             <div className="flex items-start justify-between gap-3">
                                                 <h5 className="text-sm font-semibold text-white">
                                                     {index + 1}. {question.title || 'Pregunta sin titulo'}

@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import successSound from '../assets/sounds/success.mp3';
+import errorSound from '../assets/sounds/error.mp3';
 
 const QUIZ_PLAY_CONTEXT_KEY = 'quiz_play_context';
 
@@ -70,6 +72,28 @@ const getChoicePalette = (index) => {
 
   return palette[index % palette.length];
 };
+
+const shuffleOptions = (options = []) => {
+  const arr = [...options];
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+};
+
+const mapQuestionsWithShuffledOptions = (items = []) => (
+  items.map((question) => {
+    if (!Array.isArray(question?.form_question_options) || question.form_question_options.length <= 1) {
+      return question;
+    }
+
+    return {
+      ...question,
+      form_question_options: shuffleOptions(question.form_question_options),
+    };
+  })
+);
 
 const FaceScaleIcon = ({ level, active }) => {
   const mouth = {
@@ -168,6 +192,7 @@ export default function QuizPlayPage() {
   const [finished, setFinished] = useState(false);
   const [questionError, setQuestionError] = useState('');
   const [finalResults, setFinalResults] = useState(null);
+  const [liveScore, setLiveScore] = useState(0);
   const [questionTimeLeft, setQuestionTimeLeft] = useState(null);
   const [timedOutQuestionIds, setTimedOutQuestionIds] = useState({});
   const [scoreToast, setScoreToast] = useState({ visible: false, message: '', isCorrect: false });
@@ -179,6 +204,8 @@ export default function QuizPlayPage() {
   const scoreToastTimerRef = useRef(null);
   const persistedAnswersRef = useRef({});
   const initialPreloadedDataRef = useRef(location.state?.preloadedQuizData || null);
+  const successAudioRef = useRef(null);
+  const errorAudioRef = useRef(null);
 
   const sessionId = playContext?.sessionId;
   const participantId = playContext?.participantId;
@@ -282,9 +309,57 @@ export default function QuizPlayPage() {
   }, [sessionId, participantId, formId]);
 
   useEffect(() => {
+    successAudioRef.current = new Audio(successSound);
+    successAudioRef.current.preload = 'auto';
+
+    errorAudioRef.current = new Audio(errorSound);
+    errorAudioRef.current.preload = 'auto';
+
+    return () => {
+      if (successAudioRef.current) {
+        successAudioRef.current.pause();
+        successAudioRef.current = null;
+      }
+      if (errorAudioRef.current) {
+        errorAudioRef.current.pause();
+        errorAudioRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (!finished || !participantId || !sessionId) return;
     loadFinalResults();
   }, [finished, participantId, sessionId]);
+
+  useEffect(() => {
+    if (!finished || !sessionId) return undefined;
+
+    const resultsChannel = supabase
+      .channel(`quiz_results_live_${sessionId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'quiz_participants',
+          filter: `quiz_session_id=eq.${sessionId}`,
+        },
+        () => {
+          loadFinalResults();
+        },
+      )
+      .subscribe();
+
+    const pollTimer = setInterval(() => {
+      loadFinalResults();
+    }, 2500);
+
+    return () => {
+      clearInterval(pollTimer);
+      resultsChannel.unsubscribe();
+    };
+  }, [finished, sessionId]);
 
   useEffect(() => {
     const currentQuestion = questions[currentQuestionIndex];
@@ -334,7 +409,7 @@ export default function QuizPlayPage() {
 
       if (hasPreloaded) {
         setFormData(preloaded.form);
-        setQuestions(preloaded.questions);
+        setQuestions(mapQuestionsWithShuffledOptions(preloaded.questions));
         setLoading(false);
       } else {
         setLoading(true);
@@ -388,13 +463,32 @@ export default function QuizPlayPage() {
           .order('position', { ascending: true });
 
         if (directError) throw directError;
-        setQuestions(directQuestions || []);
+        setQuestions(mapQuestionsWithShuffledOptions(directQuestions || []));
       }
+
+      await refreshLiveScore();
 
       setLoading(false);
     } catch (err) {
       setError(err.message);
       setLoading(false);
+    }
+  };
+
+  const refreshLiveScore = async () => {
+    if (!participantId) return;
+
+    try {
+      const { data, error: scoreError } = await supabase
+        .from('quiz_participant_answers')
+        .select('points_earned')
+        .eq('participant_id', participantId);
+
+      if (scoreError) return;
+      const total = (data || []).reduce((sum, row) => sum + Number(row?.points_earned || 0), 0);
+      setLiveScore(total);
+    } catch {
+      // no-op
     }
   };
 
@@ -454,6 +548,12 @@ export default function QuizPlayPage() {
     scoreToastTimerRef.current = setTimeout(() => {
       setScoreToast((prev) => ({ ...prev, visible: false }));
     }, 2600);
+
+    const audio = isCorrect ? successAudioRef.current : errorAudioRef.current;
+    if (audio) {
+      audio.currentTime = 0;
+      audio.play().catch(() => {});
+    }
   };
 
   const persistAnswer = async (questionId, value, { silent = false } = {}) => {
@@ -505,6 +605,8 @@ export default function QuizPlayPage() {
           isCorrect
         );
       }
+
+      await refreshLiveScore();
 
       console.log(`Respuesta guardada - Q:${questionId} | BasePts:${basePoints} | Descuento:${pointsPerSecond.toFixed(2)}/s | Tiempo:${elapsedSeconds}s | Final:${adjustedPoints}`);
     } catch (err) {
@@ -685,6 +787,7 @@ export default function QuizPlayPage() {
   }
 
   const currentQuestion = questions[currentQuestionIndex];
+  const currentQuestionOptions = currentQuestion?.form_question_options || [];
   const totalQuestions = questions.length;
 
   const currentAllocatedSeconds = currentQuestion
@@ -695,10 +798,10 @@ export default function QuizPlayPage() {
     <div className="min-h-screen bg-linear-to-br from-slate-950 via-slate-900 to-slate-950 p-4 sm:p-6">
       {scoreToast.visible && (
         <div className="fixed bottom-5 left-1/2 z-50 w-[min(960px,calc(100%-24px))] -translate-x-1/2">
-          <div className={`rounded-2xl border px-6 py-5 shadow-[0_20px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl ${
+          <div className={`rounded-2xl border px-6 py-5 shadow-[0_20px_60px_rgba(0,0,0,0.55)] backdrop-blur-md ${
             scoreToast.isCorrect
-              ? 'border-emerald-300/70 bg-linear-to-r from-emerald-500/30 to-green-500/20 text-emerald-50'
-              : 'border-rose-300/70 bg-linear-to-r from-rose-500/30 to-red-500/20 text-rose-50'
+              ? 'border-emerald-300/70 bg-linear-to-r from-emerald-700/92 to-emerald-600/88 text-emerald-50'
+              : 'border-rose-300/70 bg-linear-to-r from-rose-700/92 to-red-600/88 text-rose-50'
           }`}>
             <div className="flex items-center gap-3">
               <StatusIcon correct={scoreToast.isCorrect} />
@@ -715,12 +818,18 @@ export default function QuizPlayPage() {
         <div className="rounded-3xl border border-white/10 bg-white/5 p-5 shadow-2xl backdrop-blur-xl mb-6">
           <div className="flex justify-between items-center">
             <h1 className="text-2xl font-black text-white tracking-tight">{formData?.title}</h1>
-            <div className={`px-4 py-2 rounded-full font-bold ${
-              sessionStatus === 'in_progress'
-                ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40'
-                : 'bg-rose-500/20 text-rose-200 border border-rose-400/40'
-            }`}>
-              {sessionStatus === 'in_progress' ? 'En progreso' : 'Finalizado'}
+            <div className="flex items-center gap-3">
+              <div className="rounded-xl border border-amber-300/40 bg-amber-500/15 px-4 py-2 text-right">
+                <p className="text-[10px] uppercase tracking-[0.14em] text-amber-200/90">Puntos</p>
+                <p className="text-lg font-black leading-tight text-amber-100">{Number(liveScore || 0).toFixed(2)}</p>
+              </div>
+              <div className={`px-4 py-2 rounded-full font-bold ${
+                sessionStatus === 'in_progress'
+                  ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40'
+                  : 'bg-rose-500/20 text-rose-200 border border-rose-400/40'
+              }`}>
+                {sessionStatus === 'in_progress' ? 'En progreso' : 'Finalizado'}
+              </div>
             </div>
           </div>
         </div>
@@ -776,7 +885,7 @@ export default function QuizPlayPage() {
             <div className="mb-8">
               {currentQuestion.type === 'choice_unique' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {currentQuestion.form_question_options?.map((option, index) => {
+                  {currentQuestionOptions.map((option, index) => {
                     const style = getChoicePalette(index);
                     const isSelected = answers[currentQuestion.id] === option.id;
                     return (
@@ -808,7 +917,7 @@ export default function QuizPlayPage() {
 
               {currentQuestion.type === 'multiple_choice' && (
                 <div className="space-y-3">
-                  {currentQuestion.form_question_options?.map((option, index) => {
+                  {currentQuestionOptions.map((option, index) => {
                     const style = getChoicePalette(index);
                     const isChecked = Array.isArray(answers[currentQuestion.id]) && answers[currentQuestion.id].includes(option.id);
                     return (
@@ -848,7 +957,7 @@ export default function QuizPlayPage() {
 
               {currentQuestion.type === 'checkboxes' && (
                 <div className="space-y-3">
-                  {currentQuestion.form_question_options?.map((option, index) => {
+                  {currentQuestionOptions.map((option, index) => {
                     const style = getChoicePalette(index);
                     const isChecked = Array.isArray(answers[currentQuestion.id]) && answers[currentQuestion.id].includes(option.id);
                     return (
@@ -893,7 +1002,7 @@ export default function QuizPlayPage() {
                   className="w-full px-4 py-3 border-2 border-white/20 rounded-lg focus:outline-none focus:border-cyan-400 bg-slate-900 text-slate-100 font-medium transition-all"
                 >
                   <option value="">Selecciona una opción...</option>
-                  {currentQuestion.form_question_options?.map((option) => (
+                  {currentQuestionOptions.map((option) => (
                     <option key={option.id} value={option.id}>
                       {option.label}
                     </option>
