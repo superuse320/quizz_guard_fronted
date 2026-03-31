@@ -163,7 +163,7 @@ export default function JoinQuizPage() {
 
       <header className="absolute w-full top-0 left-0 right-0 z-20 border-b border-white/10 bg-black/25 backdrop-blur-xl">
         <div className=" mx-auto px-4 md:px-6 py-5 flex items-center justify-between">
-          <Link to={user ? '/main' : '/'} className="text-white font-bold tracking-wide text-lg">
+          <Link to="/" className="text-white font-bold tracking-wide text-lg">
             QUIZZIA
           </Link>
 
@@ -192,16 +192,19 @@ export default function JoinQuizPage() {
             </div>
           ) : (
             <div className="relative">
-              <button
-                onClick={() => setShowUserMenu((v) => !v)}
-                className={`h-10 w-10 rounded-full flex items-center justify-center font-bold text-white shadow-md transition ${avatarInitial
-                    ? 'bg-primary-600 hover:ring-2 hover:ring-violet-300/70'
-                    : 'bg-linear-to-r from-gray-400 to-gray-500 animate-pulse'
-                  }`}
-                aria-label="Menú de usuario"
-              >
-                {avatarInitial}
-              </button>
+              <div className="flex items-center gap-2">
+                <span className="max-w-40 truncate text-sm font-medium text-white/85">{displayName || 'Usuario'}</span>
+                <button
+                  onClick={() => setShowUserMenu((v) => !v)}
+                  className={`h-10 w-10 rounded-full flex items-center justify-center font-bold text-white shadow-md transition ${avatarInitial
+                      ? 'bg-primary-600 hover:ring-2 hover:ring-violet-300/70'
+                      : 'bg-linear-to-r from-gray-400 to-gray-500 animate-pulse'
+                    }`}
+                  aria-label="Menú de usuario"
+                >
+                  {avatarInitial}
+                </button>
+              </div>
 
               {showUserMenu && (
                 <div className="absolute right-0 mt-3 w-72 bg-linear-to-b from-black to-black border border-white/10 rounded-xl shadow-2xl overflow-hidden">

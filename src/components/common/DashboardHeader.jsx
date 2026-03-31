@@ -1,6 +1,6 @@
 
 import { useRef, useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { supabase } from '../../lib/supabase';
 import { SearchIcon } from '../../assets/icons/Search';
@@ -53,7 +53,9 @@ export default function DashboardHeader({ email, name, showSearch = true }) {
             <div className=" mx-auto px-6 py-3 flex items-center justify-between gap-4">
                 {/* Logo y título */}
                 <div className="flex items-center gap-3 min-w-45">
-                    <span className="font-semibold text-white text-lg tracking-tight">QUIZZIA</span>
+                                        <Link to="/" className="font-semibold text-white text-lg tracking-tight hover:text-white/90 transition">
+                                            QUIZZIA
+                                        </Link>
                 </div>
 
                 {/* Barra de búsqueda */}
@@ -91,22 +93,25 @@ export default function DashboardHeader({ email, name, showSearch = true }) {
                     </button>
                     {/* Avatar circular con popup */}
                     <div className="relative" ref={avatarRef}>
-                        <button
-                            className={`h-10 w-10 flex items-center justify-center rounded-full text-white font-bold text-lg shadow-md select-none focus:outline-none focus:ring-2 focus:ring-emerald-400 transition ${
-                              isLoading 
-                                ? 'bg-gradient-to-r from-gray-400 to-gray-500 animate-pulse' 
-                                : `${avatarColor} hover:ring-2 hover:ring-emerald-400`
-                            }`}
-                            onClick={() => setShowMenu((v) => !v)}
-                            aria-label="Opciones de perfil"
-                            tabIndex={0}
-                        >
-                            {!isLoading && initial}
-                        </button>
+                        <div className="flex items-center gap-2">
+                            <span className="max-w-40 truncate text-sm font-medium text-white/85">{displayName || 'Usuario'}</span>
+                            <button
+                                className={`h-10 w-10 flex items-center justify-center rounded-full text-white font-bold text-lg shadow-md select-none focus:outline-none focus:ring-2 focus:ring-emerald-400 transition ${
+                                  isLoading 
+                                    ? 'bg-linear-to-r from-gray-400 to-gray-500 animate-pulse' 
+                                    : `${avatarColor} hover:ring-2 hover:ring-emerald-400`
+                                }`}
+                                onClick={() => setShowMenu((v) => !v)}
+                                aria-label="Opciones de perfil"
+                                tabIndex={0}
+                            >
+                                {!isLoading && initial}
+                            </button>
+                        </div>
                         {showMenu && (
-                            <div className="absolute right-0 mt-3 w-72 bg-gradient-to-b from-black to-black border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
+                            <div className="absolute right-0 mt-3 w-72 bg-linear-to-b from-black to-black border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
                               {/* Header del popup */}
-                              <div className="bg-gradient-to-r from-emerald-500/10 via-transparent to-cyan-500/10 px-6 py-6 border-b border-white/5">
+                              <div className="bg-linear-to-r from-emerald-500/10 via-transparent to-cyan-500/10 px-6 py-6 border-b border-white/5">
                                 <div className="flex items-center gap-4">
                                   <div className={`h-12 w-12 rounded-full flex items-center justify-center text-white font-bold text-lg ${avatarColor} shadow-lg`}>
                                     {initial}
@@ -119,7 +124,7 @@ export default function DashboardHeader({ email, name, showSearch = true }) {
                               </div>
 
                               {/* Divider */}
-                              <div className="h-px bg-gradient-to-r from-white/0 via-white/5 to-white/0" />
+                              <div className="h-px bg-linear-to-r from-white/0 via-white/5 to-white/0" />
 
                               {/* Button */}
                               <button

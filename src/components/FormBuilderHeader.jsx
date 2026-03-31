@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useSession } from '../hooks/useSession'
 import { useProfile } from '../hooks/useProfile'
@@ -68,7 +68,7 @@ export default function FormBuilderHeader({
     <header className="relative    top-0 z-40  backdrop-blur-xl">
       <div className="flex items-center justify-between px-5 py-4">
         <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-bold text-white">QUIZZIA</h1>
+          <Link to="/" className="text-2xl font-bold text-white hover:text-white/90 transition">QUIZZIA</Link>
           <span
             className={`rounded-full border px-3 py-1 text-xs font-semibold ${formStatus === 'published'
               ? 'border-emerald-300/35 bg-emerald-500/15 text-emerald-100'
@@ -166,14 +166,17 @@ export default function FormBuilderHeader({
           <div className="h-6 w-px bg-gray-300/50" />
 
           <div className="relative" ref={avatarRef}>
-            <button
-              type="button"
-              onClick={() => setShowUserMenu((v) => !v)}
-              className="h-10 w-10 rounded-full bg-indigo-600 text-white grid place-items-center text-sm font-bold shadow-sm transition hover:ring-2 hover:ring-indigo-300/70"
-              aria-label="Menú de usuario"
-            >
-              {avatarInitial}
-            </button>
+            <div className="flex items-center gap-2">
+              <span className="max-w-40 truncate text-sm font-medium text-white/85">{displayName || 'Usuario'}</span>
+              <button
+                type="button"
+                onClick={() => setShowUserMenu((v) => !v)}
+                className="h-10 w-10 rounded-full bg-indigo-600 text-white grid place-items-center text-sm font-bold shadow-sm transition hover:ring-2 hover:ring-indigo-300/70"
+                aria-label="Menú de usuario"
+              >
+                {avatarInitial}
+              </button>
+            </div>
 
             {showUserMenu && (
               <div className="absolute right-0 mt-3 w-72 bg-linear-to-b from-black to-black border border-white/10 rounded-xl shadow-2xl overflow-hidden z-50">
