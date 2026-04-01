@@ -16,6 +16,19 @@ const parseThemeValue = (value) => {
   return typeof value === 'object' ? value : {};
 };
 
+const parseSettingsValue = (value) => {
+  if (!value) return {};
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === 'object' ? value : {};
+};
+
 const shuffleOrder = (items) => {
   const arr = [...items];
   for (let i = arr.length - 1; i > 0; i -= 1) {
@@ -88,6 +101,7 @@ function FormPublicView() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [blockedByQuizMode, setBlockedByQuizMode] = useState(false);
+  const [acceptResponses, setAcceptResponses] = useState(true);
   const [formTheme, setFormTheme] = useState({
     primary: '#2563eb',
     accent: '#14b8a6',
@@ -114,6 +128,7 @@ function FormPublicView() {
   const [strictReturnCountdownActive, setStrictReturnCountdownActive] = useState(false);
   const [strictSessionStartedAtMs, setStrictSessionStartedAtMs] = useState(null);
   const [activeSession, setActiveSession] = useState(null);
+  const [isFormOwner, setIsFormOwner] = useState(false);
   const [alreadySubmitted, setAlreadySubmitted] = useState(false);
   const [alreadySubmittedAt, setAlreadySubmittedAt] = useState(null);
   const [completedView, setCompletedView] = useState(false);
@@ -440,6 +455,10 @@ function FormPublicView() {
 
   const startStrictSession = async () => {
     if (strictStarting) return;
+    if (!acceptResponses) {
+      setSubmitMsg('Este formulario no esta aceptando respuestas por el momento.');
+      return;
+    }
     setStrictStarting(true);
 
     try {
@@ -617,6 +636,10 @@ function FormPublicView() {
     } = options;
 
     if (submitting || strictClosingRef.current) return;
+    if (!acceptResponses && !forcedReason) {
+      setSubmitMsg('Este formulario no esta aceptando respuestas por el momento.');
+      return;
+    }
     if (forcedReason) strictClosingRef.current = true;
 
     const { data: sessionData } = await supabase.auth.getSession();
@@ -787,6 +810,8 @@ function FormPublicView() {
   useEffect(() => {
     async function fetchForm() {
       setLoading(true);
+      setNotFound(false);
+      setBlockedByQuizMode(false);
       const { data: payload, error: payloadError } = await supabase
         .rpc('get_public_form_for_response', { p_public_id: public_id });
 
@@ -797,6 +822,20 @@ function FormPublicView() {
       }
 
       const formData = payload.form;
+      const parsedSettings = parseSettingsValue(formData.settings);
+      const acceptsResponsesFromSettings = typeof parsedSettings.accept_responses === 'boolean'
+        ? parsedSettings.accept_responses
+        : true;
+      setAcceptResponses(acceptsResponsesFromSettings);
+
+      const normalizedStatus = typeof formData?.status === 'string'
+        ? formData.status.toLowerCase()
+        : '';
+      if (normalizedStatus && normalizedStatus !== 'published') {
+        setNotFound(true);
+        setLoading(false);
+        return;
+      }
 
       if (String(formData?.form_mode || '').toLowerCase() === 'quiz') {
         setBlockedByQuizMode(true);
@@ -843,11 +882,23 @@ function FormPublicView() {
       const session = sessionData?.session || null;
       setActiveSession(session);
 
+      let ownerMatch = false;
+      if (session?.user?.id && public_id) {
+        const { data: ownerRow } = await supabase
+          .from('forms')
+          .select('owner_id')
+          .eq('public_id', public_id)
+          .maybeSingle();
+        ownerMatch = Boolean(ownerRow?.owner_id && ownerRow.owner_id === session.user.id);
+      }
+      setIsFormOwner(ownerMatch);
+
       if (formData?.id && session?.user?.id) {
         const submissionCheck = await checkUserAlreadySubmitted(formData.id, session.user.id);
         setAlreadySubmitted(submissionCheck.hasSubmission);
         setAlreadySubmittedAt(submissionCheck.submittedAt);
       } else {
+        setIsFormOwner(false);
         setAlreadySubmitted(false);
         setAlreadySubmittedAt(null);
       }
@@ -869,6 +920,7 @@ function FormPublicView() {
     setStrictReturnCountdownActive(false);
     setStrictSessionStartedAtMs(null);
     setCompletedView(false);
+    setIsFormOwner(false);
     setAlreadySubmitted(false);
     setAlreadySubmittedAt(null);
     strictLastEventRef.current = 0;
@@ -1210,7 +1262,7 @@ function FormPublicView() {
     );
   }
 
-  if (alreadySubmitted) {
+  if (alreadySubmitted && !isFormOwner) {
     return (
       <main className="relative min-h-screen overflow-hidden bg-black px-4 py-10 text-white">
         <div className="pointer-events-none absolute inset-0">
@@ -1340,6 +1392,11 @@ function FormPublicView() {
               {form.title}
             </h1>
             <p className="text-base leading-relaxed" style={{ color: textSecondary }}>{form.description}</p>
+            {!acceptResponses ? (
+              <div className="mt-4 rounded-lg border border-rose-400/35 bg-rose-500/15 px-3 py-2 text-sm font-semibold text-rose-200">
+                Este formulario no esta aceptando respuestas en este momento.
+              </div>
+            ) : null}
           </div>
         {isStrictMode && !strictStarted ? (
           <section className="mb-7 px-1 py-2">
@@ -1380,7 +1437,7 @@ function FormPublicView() {
             <button
               type="button"
               onClick={startStrictSession}
-              disabled={!strictCanStartNow || strictStarting}
+              disabled={!strictCanStartNow || strictStarting || !acceptResponses || alreadySubmitted}
               className="mt-5 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
               style={{backgroundImage: `linear-gradient(90deg, ${formTheme.primary}, ${formTheme.accent})`}}
             >
@@ -1649,7 +1706,7 @@ function FormPublicView() {
               ) : (
                 <button
                   type="button"
-                  disabled={submitting || !activeSession?.user?.id || (strictDurationRemaining !== null && strictDurationRemaining <= 0)}
+                  disabled={submitting || !activeSession?.user?.id || !acceptResponses || alreadySubmitted || (strictDurationRemaining !== null && strictDurationRemaining <= 0)}
                   onClick={() => {
                     if (!validateRequiredQuestion(strictQuestion)) return;
                     handleSubmit();
@@ -1663,13 +1720,24 @@ function FormPublicView() {
             </div>
           ) : !isStrictMode ? (
             <div className="flex justify-end">
-              <button disabled={submitting || !activeSession?.user?.id} onClick={handleSubmit} className="cursor-pointer rounded-xl px-10 py-2  font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-gray-300" style={{backgroundImage: `linear-gradient(90deg, ${formTheme.primary}, ${formTheme.accent})`}}>
+              <button disabled={submitting || !activeSession?.user?.id || !acceptResponses || alreadySubmitted} onClick={handleSubmit} className="cursor-pointer rounded-xl px-10 py-2  font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-gray-300" style={{backgroundImage: `linear-gradient(90deg, ${formTheme.primary}, ${formTheme.accent})`}}>
                 Enviar 
               </button>
             </div>
           ) : null}
+          {alreadySubmitted && isFormOwner ? (
+            <p className="mt-3 text-sm text-amber-300">Ya respondiste este formulario con tu cuenta de propietario. El botón Enviar está bloqueado.</p>
+          ) : null}
           {!activeSession?.user?.id ? (
-            <p className="mt-3 text-sm" style={{ color: textMuted }}>Debes iniciar sesion para enviar respuestas.</p>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <p className="text-sm" style={{ color: textMuted }}>Debes iniciar sesion para responder este formulario.</p>
+              <Link
+                to="/home"
+                className="inline-flex rounded-md border border-white/20 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:bg-white/10"
+              >
+                Iniciar sesión
+              </Link>
+            </div>
           ) : null}
           {submitMsg && (
             <div className={`mt-3 font-semibold ${Object.keys(fieldErrors).length > 0 || submitMsg.toLowerCase().includes('error') ? 'text-rose-300' : 'text-emerald-300'}`}>

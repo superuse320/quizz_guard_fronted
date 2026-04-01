@@ -12,6 +12,7 @@ import { CloseIcon } from './assets/icons/CloseIcon.jsx'
 import { DuplicateIcon } from './assets/icons/DuplicateIcon.jsx'
 import { TrashIcon } from './assets/icons/TrashIcon.jsx'
 import { QuestionTypeIcon } from './assets/icons/QuestionTypeIcon.jsx'
+import { LinkChainIcon } from './assets/icons/LinkChainIcon.jsx'
 
 const THEME_PRESETS = {
   midnight_blue: {
@@ -139,7 +140,7 @@ const toIsoDateTimeOrNull = (value) => {
 const FORM_MODES = [
   { value: 'normal', label: 'Normal', help: 'Formulario clasico.' },
   { value: 'quiz', label: 'Quiz', help: 'Modo juego con dinamica tipo quiz.' },
-  { value: 'strict', label: 'Estricto', help: 'Modo examen con control mas riguroso.' },
+  { value: 'strict', label: 'Examen', help: 'Modo examen con control mas riguroso.' },
 ]
 
 const QUESTION_TYPES = [
@@ -163,6 +164,7 @@ const QUESTION_TYPES = [
 
 const DEFAULT_OPTIONS = ['Opcion 1', 'Opcion 2']
 const SCOREABLE_TYPES = new Set(['short_answer', 'multiple_choice', 'choice_unique', 'dropdown', 'ranking', 'number', 'date', 'time'])
+const AI_SIDEBAR_STORAGE_KEY = 'form_builder_ai_sidebar_open'
 
 const isChoiceType = (type) => type === 'multiple_choice' || type === 'checkboxes' || type === 'choice_unique' || type === 'dropdown'
 const isTextType = (type) =>
@@ -238,8 +240,10 @@ function FormBuilderPage(props) {
   const [strictWindowEnabled, setStrictWindowEnabled] = useState(false)
   const [strictStartsAt, setStrictStartsAt] = useState('')
   const [strictEndsAt, setStrictEndsAt] = useState('')
+  const [acceptResponses, setAcceptResponses] = useState(true)
+  const [publishModalAcceptResponses, setPublishModalAcceptResponses] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [saveIntent, setSaveIntent] = useState('draft')
+  const [saveIntent, setSaveIntent] = useState('save')
   const [formStatus, setFormStatus] = useState('draft')
   const [currentPublicId, setCurrentPublicId] = useState('')
   const [saveError, setSaveError] = useState(null)
@@ -254,19 +258,29 @@ function FormBuilderPage(props) {
   const location = useLocation()
   const { public_id } = useParams();
   const editMode = props.editMode !== undefined ? props.editMode : !!public_id;
+  const hasPersistedForm = Boolean(public_id || currentPublicId)
   const controlPanelPublicId = public_id || currentPublicId
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiGenerationError, setAiGenerationError] = useState('')
-  const [isAiSidebarOpen, setIsAiSidebarOpen] = useState(true)
+  const [isAiSidebarOpen, setIsAiSidebarOpen] = useState(() => {
+    try {
+      return localStorage.getItem(AI_SIDEBAR_STORAGE_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
   const [showAddQuestionModal, setShowAddQuestionModal] = useState(false)
   const [showCoverPickerModal, setShowCoverPickerModal] = useState(false)
   const [showCustomThemeModal, setShowCustomThemeModal] = useState(false)
+  const [showAppearancePanel, setShowAppearancePanel] = useState(false)
   const [selectedThemePreset, setSelectedThemePreset] = useState('midnight_blue')
   const [formTheme, setFormTheme] = useState(DEFAULT_FORM_THEME)
   const [openQuestionSettings, setOpenQuestionSettings] = useState({})
   const [uploadingCover, setUploadingCover] = useState(false)
+  const [draggedQuestionId, setDraggedQuestionId] = useState(null)
+  const [dragOverQuestionId, setDragOverQuestionId] = useState(null)
   const [generateQuiz, { isLoading: isGeneratingWithAi }] = useGenerateQuizMutation()
   const [upsertForm] = useUpsertFormMutation()
 
@@ -318,15 +332,59 @@ function FormBuilderPage(props) {
   }, [saving, saveIntent])
 
   useEffect(() => {
-    if (!showAddQuestionModal && !showCustomThemeModal && !showCoverPickerModal) return
+    const handleSaveShortcut = (event) => {
+      const isSaveShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's'
+      if (!isSaveShortcut) return
+      event.preventDefault()
+      if (!hasPersistedForm || saving || checkingSession || !formTitle.trim()) return
+
+      const statusToKeep = formStatus === 'published' ? 'published' : 'draft'
+      persistForm(statusToKeep, 'save')
+    }
+
+    window.addEventListener('keydown', handleSaveShortcut)
+    return () => window.removeEventListener('keydown', handleSaveShortcut)
+  }, [hasPersistedForm, saving, checkingSession, formTitle, formStatus])
+
+  useEffect(() => {
+    if (!showAddQuestionModal && !showCustomThemeModal && !showCoverPickerModal && !showAppearancePanel && !showPublishModal) return
     const handleEscape = (event) => {
       if (event.key === 'Escape') setShowAddQuestionModal(false)
       if (event.key === 'Escape') setShowCustomThemeModal(false)
       if (event.key === 'Escape') setShowCoverPickerModal(false)
+      if (event.key === 'Escape') setShowAppearancePanel(false)
+      if (event.key === 'Escape') setShowPublishModal(false)
     }
     window.addEventListener('keydown', handleEscape)
     return () => window.removeEventListener('keydown', handleEscape)
-  }, [showAddQuestionModal, showCustomThemeModal, showCoverPickerModal])
+  }, [showAddQuestionModal, showCustomThemeModal, showCoverPickerModal, showAppearancePanel, showPublishModal])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(AI_SIDEBAR_STORAGE_KEY, isAiSidebarOpen ? '1' : '0')
+    } catch {
+      // no-op
+    }
+  }, [isAiSidebarOpen])
+
+  const openPublishPopup = () => {
+    if (formMode === 'quiz' && !joinCode) {
+      setJoinCode(generateQuizCode())
+    }
+    setPublishModalAcceptResponses(acceptResponses)
+    setShowPublishModal(true)
+  }
+
+  const openControlPanel = () => {
+    if (!controlPanelPublicId) return
+    if (formMode === 'quiz') {
+      navigate(`/form/${controlPanelPublicId}/quiz-control`)
+      return
+    }
+    if (formMode === 'strict') {
+      navigate(`/form/${controlPanelPublicId}/strict-control`)
+    }
+  }
 
   useEffect(() => {
     setSelectedThemePreset(getPresetNameFromTheme(formTheme))
@@ -355,6 +413,9 @@ function FormBuilderPage(props) {
         setFormMode(formData.form_mode || 'normal');
         setJoinCode(formData.join_code || '');
         const formSettings = parseSettingsValue(formData.settings)
+        const acceptsResponsesFromSettings = typeof formSettings.accept_responses === 'boolean'
+          ? formSettings.accept_responses
+          : true
         const durationEnabledFromSettings = Boolean(formSettings.strict_duration_enabled)
         const windowEnabledFromSettings = Boolean(formSettings.strict_window_enabled)
         const isStrictMode = (formData.form_mode || 'normal') === 'strict'
@@ -369,6 +430,8 @@ function FormBuilderPage(props) {
         setStrictWindowEnabled(defaultDurationForStrict ? false : (durationEnabledFromSettings ? false : windowEnabledFromSettings))
         setStrictStartsAt(toDateTimeInputValue(formSettings.strict_starts_at || formData.opened_at))
         setStrictEndsAt(toDateTimeInputValue(formSettings.strict_ends_at || formData.closed_at))
+        setAcceptResponses(acceptsResponsesFromSettings)
+        setPublishModalAcceptResponses(acceptsResponsesFromSettings)
         setFormTheme((current) => {
           const parsedTheme = parseThemeValue(formData.theme)
           const coverImage = parsedTheme.coverImage || formData.cover_image_url || ''
@@ -539,6 +602,26 @@ function FormBuilderPage(props) {
       return next
     })
     setActiveQuestionId((current) => (current === id ? null : current))
+  }
+
+  const reorderQuestionsByDrag = (dragId, targetId) => {
+    if (!dragId || !targetId || dragId === targetId) return
+
+    setQuestions((current) => {
+      const dragIndex = current.findIndex((question) => question.id === dragId)
+      const targetIndex = current.findIndex((question) => question.id === targetId)
+      if (dragIndex === -1 || targetIndex === -1) return current
+
+      const draggedQuestion = current[dragIndex]
+      const targetQuestion = current[targetIndex]
+      if ((draggedQuestion.section || 1) !== (targetQuestion.section || 1)) return current
+
+      const next = [...current]
+      const [moved] = next.splice(dragIndex, 1)
+      const insertionIndex = dragIndex < targetIndex ? targetIndex - 1 : targetIndex
+      next.splice(insertionIndex, 0, moved)
+      return next
+    })
   }
 
   const addSection = () => {
@@ -1512,13 +1595,15 @@ function FormBuilderPage(props) {
     return null
   }
 
-  const persistForm = async (nextStatus = 'draft') => {
+  const persistForm = async (nextStatus = 'draft', intent = 'save', options = {}) => {
     if (!session?.user?.id) {
       setSaveError('Debes iniciar sesión para crear o editar un formulario.')
       return
     }
 
-    setSaveIntent(nextStatus)
+    if (saving) return
+
+    setSaveIntent(intent)
     setSaving(true)
     setSaveError(null)
 
@@ -1533,7 +1618,11 @@ function FormBuilderPage(props) {
       const effectiveWindowEnabled = formMode === 'strict'
         ? strictTimingMode === 'global_window'
         : Boolean(strictWindowEnabled)
+      const acceptResponsesToPersist = typeof options.acceptResponses === 'boolean'
+        ? options.acceptResponses
+        : Boolean(acceptResponses)
       const strictSettings = {
+        accept_responses: acceptResponsesToPersist,
         strict_duration_enabled: effectiveDurationEnabled,
         strict_duration_minutes: normalizedDurationMinutes,
         strict_window_enabled: effectiveWindowEnabled,
@@ -1674,9 +1763,9 @@ function FormBuilderPage(props) {
         }
       }
 
-      const successMessage = nextStatus === 'published'
+      const successMessage = intent === 'published'
         ? 'Formulario publicado con exito.'
-        : 'Borrador guardado con exito.'
+        : 'Cambios guardados con exito.'
 
       const generatedPublicUrl = formMode === 'quiz'
         ? ''
@@ -1687,12 +1776,12 @@ function FormBuilderPage(props) {
         replace: true,
         state: {
           successToast: successMessage,
-          publishResult: nextStatus === 'published'
+          publishResult: intent === 'published'
             ? {
-                url: generatedPublicUrl,
-                publicId: currentPublicId,
-                title: formTitle,
-              }
+              url: generatedPublicUrl,
+              publicId: currentPublicId,
+              title: formTitle,
+            }
             : null,
         },
       })
@@ -1755,6 +1844,8 @@ function FormBuilderPage(props) {
 
       <FormBuilderHeader
         formTheme={formTheme}
+        formMode={formMode}
+        joinCode={joinCode}
         isPreviewOpen={isPreviewOpen}
         setIsPreviewOpen={setIsPreviewOpen}
         setShowResults={setShowResults}
@@ -1763,6 +1854,7 @@ function FormBuilderPage(props) {
         saving={saving}
         checkingSession={checkingSession}
         saveIntent={saveIntent}
+        hasPersistedForm={hasPersistedForm}
         formStatus={formStatus}
         publicFormUrl={currentPublicId && formMode !== 'quiz' ? `${window.location.origin}/formulario/${currentPublicId}` : ''}
         persistForm={persistForm}
@@ -1770,7 +1862,243 @@ function FormBuilderPage(props) {
         onLoadTemplate={handleLoadTemplate}
         onImportFile={handleImportFile}
         onExportFile={handleExportFile}
+        showAppearancePanel={showAppearancePanel}
+        onToggleAppearancePanel={() => setShowAppearancePanel((current) => !current)}
+        onCloseAppearancePanel={() => setShowAppearancePanel(false)}
+        selectedThemePreset={selectedThemePreset}
+        themePresetOptions={THEME_PRESET_OPTIONS}
+        onThemePresetChange={handleThemeSelectChange}
+        onOpenCustomTheme={() => setShowCustomThemeModal(true)}
+        onOpenCoverPicker={() => setShowCoverPickerModal(true)}
+        onClearCoverImage={() => updateThemeField('coverImage', '')}
+        onOpenControlPanel={openControlPanel}
+        onOpenPublishModal={openPublishPopup}
       />
+
+      {showPublishModal && !isPreviewOpen ? (
+        <div className="fixed inset-0 z-[121] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={() => setShowPublishModal(false)}>
+          <div
+            className="w-full max-w-xl rounded-2xl border border-white/15 bg-black p-6 text-white shadow-[0_28px_80px_rgba(0,0,0,0.65)]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {formStatus === 'published' ? (
+              <>
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-cyan-200/80">Publicado</p>
+                    <h3 className="mt-1 text-2xl font-black">Opciones publicadas</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowPublishModal(false)}
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 transition hover:bg-white/10"
+                    aria-label="Cerrar"
+                    title="Cerrar"
+                  >
+                    <CloseIcon className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-100">Estado de publicación</p>
+                        <p className="text-xs text-slate-400">Si lo pausas, el formulario pasará a borrador y dejará de aceptar respuestas.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPublishModalAcceptResponses((current) => !current)}
+                        role="switch"
+                        aria-checked={publishModalAcceptResponses}
+                        className={`inline-flex cursor-pointer items-center rounded-full border p-1 transition ${publishModalAcceptResponses
+                          ? 'border-emerald-300/40 bg-emerald-500/20 hover:bg-emerald-500/30'
+                          : 'border-rose-300/40 bg-rose-500/20 hover:bg-rose-500/30'
+                          }`}
+                        title={publishModalAcceptResponses ? 'Publicado' : 'Borrador'}
+                        aria-label={publishModalAcceptResponses ? 'Publicado' : 'Borrador'}
+                      >
+                        <span
+                          className={`relative inline-flex h-6 w-12 items-center rounded-full transition ${publishModalAcceptResponses ? 'bg-emerald-500' : 'bg-rose-500'}`}
+                        >
+                          <span
+                            className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${publishModalAcceptResponses ? 'translate-x-6' : 'translate-x-1'}`}
+                          />
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                    <p className="mb-3 text-sm font-semibold text-slate-100">Respuestas</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const publicIdToOpen = currentPublicId || public_id
+                        if (!publicIdToOpen) {
+                          setSaveError('No hay identificador publico para abrir respuestas')
+                          return
+                        }
+                        navigate(`/form/${publicIdToOpen}/respuestas`)
+                        setShowPublishModal(false)
+                      }}
+                      className="w-full rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-sm font-semibold text-slate-100 transition hover:bg-white/10"
+                    >
+                      Ver respuestas
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const shareUrl = formMode === 'quiz'
+                        ? `${window.location.origin}/quiz/join?code=${joinCode}`
+                        : (currentPublicId ? `${window.location.origin}/formulario/${currentPublicId}` : '')
+
+                      if (!shareUrl) {
+                        setSaveError('No hay enlace disponible para copiar todavía')
+                        return
+                      }
+
+                      try {
+                        await navigator.clipboard.writeText(shareUrl)
+                        setSuccessToast('Enlace copiado al portapapeles')
+                      } catch {
+                        setSaveError('No se pudo copiar el enlace')
+                      }
+                    }}
+                    className="inline-flex items-center gap-2 rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/25"
+                  >
+                    <LinkChainIcon className="h-4 w-4" />
+                    Copiar enlace de encuestado/a
+                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowPublishModal(false)}
+                      className="rounded-lg border border-white/20 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-white/10"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={saving || checkingSession}
+                      onClick={async () => {
+                        const nextStatus = publishModalAcceptResponses ? 'published' : 'draft'
+                        await persistForm(nextStatus, 'save', { acceptResponses: publishModalAcceptResponses })
+                        setAcceptResponses(publishModalAcceptResponses)
+                        setShowPublishModal(false)
+                      }}
+                      className="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {saving && saveIntent === 'save' ? 'Guardando...' : 'Guardar'}
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-emerald-200/85">Publicación</p>
+                    <h3 className="mt-1 text-2xl font-black">Configurar antes de publicar</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowPublishModal(false)}
+                    className="rounded-lg border border-white/20 px-3 py-1.5 text-sm text-slate-200 transition hover:bg-white/10"
+                  >
+                    Cerrar
+                  </button>
+                </div>
+
+                {formMode === 'quiz' ? (
+                  <>
+                    <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-300">Código de invitación</label>
+                    <div className="mb-3 flex gap-2">
+                      <input
+                        type="text"
+                        value={joinCode}
+                        readOnly
+                        className="flex-1 rounded-lg border border-white/20 bg-black px-3 py-2 text-center font-mono text-base font-bold text-slate-100"
+                      />
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(joinCode)
+                            setSuccessToast('Codigo copiado al portapapeles')
+                          } catch {
+                            setSaveError('No se pudo copiar el codigo')
+                          }
+                        }}
+                        className="rounded-lg border border-primary-300/35 bg-primary-500/20 px-3 py-2 text-sm font-semibold text-primary-100 transition hover:bg-primary-500/30"
+                      >
+                        Copiar
+                      </button>
+                    </div>
+                    <p className="mb-4 text-xs text-slate-400">Comparte este código con tus participantes. Al publicar, el quiz quedará disponible para entrar con código.</p>
+                    <div className="mb-5 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const quizUrl = `${window.location.origin}/quiz/join?code=${joinCode}`
+                          try {
+                            if (navigator.share) {
+                              await navigator.share({
+                                title: formTitle || 'Quiz',
+                                text: `Únete con el código: ${joinCode}`,
+                                url: quizUrl,
+                              })
+                            } else {
+                              await navigator.clipboard.writeText(`Únete al quiz con el código ${joinCode}: ${quizUrl}`)
+                              setSuccessToast('Mensaje de invitación copiado')
+                            }
+                          } catch {
+                            setSaveError('No se pudo compartir la invitación')
+                          }
+                        }}
+                        className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/25"
+                      >
+                        Compartir
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-300">Link del formulario</p>
+                    <div className="mb-3">
+                      <input
+                        type="text"
+                        readOnly
+                        value={currentPublicId ? `${window.location.origin}/formulario/${currentPublicId}` : 'Se generará al publicar'}
+                        className="flex-1 rounded-lg border border-white/20 bg-black px-3 py-2 text-xs text-slate-100"
+                      />
+                    </div>
+                  </>
+                )}
+
+                <div className="mt-4 flex justify-end">
+                  <button
+                    type="button"
+                    disabled={!formTitle.trim() || saving || checkingSession}
+                    onClick={() => {
+                      setShowPublishModal(false)
+                      persistForm('published', 'published')
+                    }}
+                    className="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {saving && saveIntent === 'published' ? 'Publicando...' : 'Publicar ahora'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       {successToast ? (
         <div className="fixed right-5 top-20 z-50 max-w-sm rounded-xl border border-emerald-200 bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-lg">
@@ -1873,72 +2201,71 @@ function FormBuilderPage(props) {
 
             <div className="space-y-12">
               {questions.map((question) => {
-              const shouldBeRequired = isRequiredByCondition(question)
-              return (
-                <div key={`quiz-respond-${question.id}`} className="space-y-6">
-                  <div className="text-center">
-                    <h2 className="mb-2 text-3xl font-bold text-white">{question.title || 'Pregunta sin titulo'}</h2>
-                    {question.description ? <p className="text-slate-300">{question.description}</p> : null}
-                    {shouldBeRequired ? (
-                      <span className="mt-3 inline-block rounded-full border border-red-300/40 bg-red-500/15 px-4 py-1 text-sm font-semibold text-red-200">
-                        Obligatoria
-                      </span>
+                const shouldBeRequired = isRequiredByCondition(question)
+                return (
+                  <div key={`quiz-respond-${question.id}`} className="space-y-6">
+                    <div className="text-center">
+                      <h2 className="mb-2 text-3xl font-bold text-white">{question.title || 'Pregunta sin titulo'}</h2>
+                      {question.description ? <p className="text-slate-300">{question.description}</p> : null}
+                      {shouldBeRequired ? (
+                        <span className="mt-3 inline-block rounded-full border border-red-300/40 bg-red-500/15 px-4 py-1 text-sm font-semibold text-red-200">
+                          Obligatoria
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <div className="grid gap-6 sm:grid-cols-2 place-items-center">
+                      {question.type === 'multiple_choice' || question.type === 'checkboxes' || question.type === 'choice_unique' ? (
+                        question.options.map((option, optIndex) => {
+                          const isSelected = question.type === 'checkboxes' || question.type === 'multiple_choice'
+                            ? Array.isArray(responses[question.id]) && responses[question.id].includes(optIndex)
+                            : Number(responses[question.id]) === optIndex
+                          const optionColor = getRandomColor(optIndex)
+                          return (
+                            <button
+                              key={`quiz-option-${optIndex}`}
+                              onClick={() => {
+                                if (question.type === 'checkboxes' || question.type === 'multiple_choice') {
+                                  toggleCheckboxResponse(question.id, optIndex)
+                                } else {
+                                  updateResponse(question.id, optIndex)
+                                }
+                              }}
+                              className={`relative transform rounded-3xl px-8 py-8 text-center text-xl font-bold transition duration-200 flex items-center justify-center w-full h-24 ${isSelected
+                                  ? 'shadow-lg hover:scale-105 active:scale-95'
+                                  : 'hover:scale-105 active:scale-95 opacity-70 hover:opacity-100'
+                                }`}
+                              style={{
+                                backgroundColor: isSelected ? optionColor : 'rgba(0,0,0,0.3)',
+                                borderColor: optionColor,
+                                borderWidth: isSelected ? '3px' : '2px',
+                                color: '#fff',
+                              }}
+                            >
+                              <span>{option || `Opción ${optIndex + 1}`}</span>
+                              {isSelected && (
+                                <svg className="absolute top-2 right-2 w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                </svg>
+                              )}
+                            </button>
+                          )
+                        })
+                      ) : (
+                        <div className="col-span-full w-full max-w-md">
+                          {getRespondentComponent(question, responses, responseErrors, updateResponse, toggleCheckboxResponse, handleRankingMove)}
+                        </div>
+                      )}
+                    </div>
+
+                    {responseErrors[question.id] ? (
+                      <p className="rounded-lg border border-red-400/40 bg-red-500/15 p-3 text-sm font-medium text-red-300">
+                        ⚠ {responseErrors[question.id]}
+                      </p>
                     ) : null}
                   </div>
-
-                  <div className="grid gap-6 sm:grid-cols-2 place-items-center">
-                    {question.type === 'multiple_choice' || question.type === 'checkboxes' || question.type === 'choice_unique' ? (
-                      question.options.map((option, optIndex) => {
-                        const isSelected = question.type === 'checkboxes' || question.type === 'multiple_choice'
-                          ? Array.isArray(responses[question.id]) && responses[question.id].includes(optIndex)
-                          : Number(responses[question.id]) === optIndex
-                        const optionColor = getRandomColor(optIndex)
-                        return (
-                          <button
-                            key={`quiz-option-${optIndex}`}
-                            onClick={() => {
-                              if (question.type === 'checkboxes' || question.type === 'multiple_choice') {
-                                toggleCheckboxResponse(question.id, optIndex)
-                              } else {
-                                updateResponse(question.id, optIndex)
-                              }
-                            }}
-                            className={`relative transform rounded-3xl px-8 py-8 text-center text-xl font-bold transition duration-200 flex items-center justify-center w-full h-24 ${
-                              isSelected
-                                ? 'shadow-lg hover:scale-105 active:scale-95'
-                                : 'hover:scale-105 active:scale-95 opacity-70 hover:opacity-100'
-                            }`}
-                            style={{
-                              backgroundColor: isSelected ? optionColor : 'rgba(0,0,0,0.3)',
-                              borderColor: optionColor,
-                              borderWidth: isSelected ? '3px' : '2px',
-                              color: '#fff',
-                            }}
-                          >
-                            <span>{option || `Opción ${optIndex + 1}`}</span>
-                            {isSelected && (
-                              <svg className="absolute top-2 right-2 w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                              </svg>
-                            )}
-                          </button>
-                        )
-                      })
-                    ) : (
-                      <div className="col-span-full w-full max-w-md">
-                        {getRespondentComponent(question, responses, responseErrors, updateResponse, toggleCheckboxResponse, handleRankingMove)}
-                      </div>
-                    )}
-                  </div>
-
-                  {responseErrors[question.id] ? (
-                    <p className="rounded-lg border border-red-400/40 bg-red-500/15 p-3 text-sm font-medium text-red-300">
-                      ⚠ {responseErrors[question.id]}
-                    </p>
-                  ) : null}
-                </div>
-              )
-            })}
+                )
+              })}
             </div>
 
             <div className="mt-12 flex justify-center gap-4">
@@ -2132,100 +2459,7 @@ function FormBuilderPage(props) {
           </div>
         </section>
       )) : (
-        <section className="mx-auto max-w-6xl px-5 py-8 pb-28 lg:pr-[23rem]">
-          <article className="mb-7 rounded-2xl border border-white/10 bg-white/5 p-6 shadow-[0_16px_40px_rgba(2,6,23,0.45)] lg:fixed lg:right-5 lg:top-24 lg:z-20 lg:w-[21rem] lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
-            <div className="mb-4">
-              <h2 className="text-lg font-bold text-slate-100">Configuración</h2>
-            </div>
-
-            <div className="mb-4 rounded-xl ">
-              <label className="text-xs font-semibold uppercase tracking-wide text-slate-300">
-                Tema 
-                <select
-                  value={selectedThemePreset}
-                  onChange={(event) => handleThemeSelectChange(event.target.value)}
-                  className="mt-2 w-full rounded-lg border border-white/15 bg-black px-3 py-2 text-sm text-slate-100 outline-none focus:border-primary-400"
-                >
-                  {THEME_PRESET_OPTIONS.map((preset) => (
-                    <option key={preset.value} value={preset.value}>
-                      {preset.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            {selectedThemePreset === 'custom' ? (
-              <button
-                type="button"
-                onClick={() => setShowCustomThemeModal(true)}
-                className="mt-3 w-full rounded-lg border border-primary-300/30 bg-primary-500/12 px-3 py-2 text-sm font-semibold text-primary-100 transition hover:bg-primary-500/20"
-              >
-                Ajustar colores personalizados
-              </button>
-            ) : null}
-
-            <div className="mt-4 rounded-xl ">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">Portada</p>
-              <div className="mt-3 space-y-2">
-                <button
-                  type="button"
-                  onClick={() => setShowCoverPickerModal(true)}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-sm font-semibold text-slate-100 transition hover:bg-white/10"
-                >
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <rect x="3" y="5" width="18" height="14" rx="2" />
-                    <circle cx="8.5" cy="10" r="1.5" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 16l-5-5-4 4-2-2-4 4" />
-                  </svg>
-                  Seleccionar portada
-                </button>
-                {formTheme.coverImage ? (
-                  <button
-                    type="button"
-                    onClick={() => updateThemeField('coverImage', '')}
-                    className="w-full rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10"
-                  >
-                    Quitar portada
-                  </button>
-                ) : null}
-              </div>
-            </div>
-
-     
-
-    
-          </article>
-          <div className="mb-5 rounded-xl ">
-                   <p className="mt-2 text-xs text-slate-400">
-              {(FORM_MODES.find((mode) => mode.value === formMode) || FORM_MODES[0]).help}
-            </p>
-            <div className="mt-3 grid gap-2 md:grid-cols-3">
-              {FORM_MODES.map((mode) => {
-                const isActiveMode = formMode === mode.value
-                return (
-                  <button
-                    key={mode.value}
-                    type="button"
-                    onClick={() => {
-                      setFormMode(mode.value)
-                      if (mode.value === 'strict' && !strictDurationEnabled && !strictWindowEnabled) {
-                        setStrictDurationEnabled(true)
-                        setStrictWindowEnabled(false)
-                      }
-                    }}
-                    className={`cursor-pointer rounded-xl border px-3 py-2 text-sm font-semibold transition ${isActiveMode
-                      ? 'border-primary-300/35 bg-linear-to-r from-primary-600 to-primary-600 text-white shadow-[0_8px_22px_rgba(79,70,229,0.35)]'
-                      : 'border-white/20 bg-black text-slate-300 hover:bg-[#1a2336]'
-                      }`}
-                  >
-                    {mode.label}
-                  </button>
-                )
-              })}
-            </div>
-     
-          </div>
+        <section className="mx-auto max-w-6xl px-5 py-8 pb-28">
           <article
             className="mt-10 mb-7 rounded-2xl "
           >
@@ -2235,14 +2469,48 @@ function FormBuilderPage(props) {
               <div className="mb-6 overflow-hidden rounded-2xl ">
                 <img src={formTheme.coverImage} alt="Portada del formulario" className="h-44 w-full object-cover" />
               </div>
-            ) : null}
-            <input
-              value={formTitle}
-              onChange={(event) => setFormTitle(event.target.value)}
-              className="w-full border-b border-white/20 bg-transparent pb-2 text-3xl font-bold text-slate-100 outline-none transition focus:border-primary-400"
-              placeholder="Formulario sin titulo"
-              aria-label="Titulo del formulario"
-            />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowCoverPickerModal(true)}
+                className="mb-6 flex h-36 w-full cursor-pointer items-center justify-center rounded-2xl border-2 border-dashed border-white/25 bg-white/5 text-sm font-semibold text-slate-300 transition hover:border-primary-300/45 hover:text-slate-100"
+              >
+                Seleccionar portada
+              </button>
+            )}
+
+            <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+              <input
+                value={formTitle}
+                onChange={(event) => setFormTitle(event.target.value)}
+                className="w-full border-b border-white/20 bg-transparent pb-2 text-3xl font-bold text-slate-100 outline-none transition focus:border-primary-400"
+                placeholder="Formulario sin titulo"
+                aria-label="Titulo del formulario"
+              />
+              <div className="min-w-[14rem]">
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Tipo
+                </label>
+                <select
+                  value={formMode}
+                  onChange={(event) => {
+                    const nextMode = event.target.value
+                    setFormMode(nextMode)
+                    if (nextMode === 'strict' && !strictDurationEnabled && !strictWindowEnabled) {
+                      setStrictDurationEnabled(true)
+                      setStrictWindowEnabled(false)
+                    }
+                  }}
+                  className="mt-1 w-full rounded-lg border border-white/20 bg-black px-3 py-2 text-sm text-slate-100 outline-none focus:border-primary-400"
+                >
+                  {FORM_MODES.map((mode) => (
+                    <option key={mode.value} value={mode.value}>
+                      {mode.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
             <textarea
               value={formDescription}
               onChange={(event) => setFormDescription(event.target.value)}
@@ -2252,9 +2520,143 @@ function FormBuilderPage(props) {
               aria-label="Descripcion del formulario"
             />
 
+            <p className="mt-2 text-xs text-slate-400">
+              {(FORM_MODES.find((mode) => mode.value === formMode) || FORM_MODES[0]).help}
+            </p>
+
             <p className="mt-4 text-sm text-gray-500">
               {questions.length} preguntas | {totalRequired} obligatorias | {sectionCount} secciones
             </p>
+
+            {!isPreviewOpen && formMode === 'quiz' ? (
+              <div className="mt-4 rounded-xl bg-white/[0.03] px-3 py-2.5">
+
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={joinCode}
+                    readOnly
+                    placeholder="Se generará al guardar..."
+                    className="flex-1 rounded-lg bg-black/35 px-3 py-2 text-center font-mono text-sm font-bold text-slate-100 outline-none"
+                  />
+                  {joinCode ? (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(joinCode)
+                          setSuccessToast('Codigo copiado al portapapeles')
+                        } catch {
+                          setSaveError('No se pudo copiar el codigo')
+                        }
+                      }}
+                      className="rounded-lg bg-primary-500/20 px-3 py-2 text-xs font-semibold text-primary-100 transition hover:bg-primary-500/30"
+                    >
+                      Copiar
+                    </button>
+                  ) : null}
+                </div>
+                <p className='text-white my-2 text-xs'>
+                  Para iniciar el quiz, primero debes crear una sesión desde el panel de control.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!controlPanelPublicId) return
+                    navigate(`/form/${controlPanelPublicId}/quiz-control`)
+                  }}
+                  disabled={!controlPanelPublicId}
+                  className="w-full cursor-pointer mt-3 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-emerald-500 disabled:bg-gray-500"
+                >
+                  Abrir panel de control
+                </button>
+              </div>
+            ) : null}
+
+            {!isPreviewOpen && formMode === 'strict' ? (
+              <div className="mt-5 rounded-2xl border border-white/15 bg-black/25 p-4">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <p className="text-sm font-bold text-slate-100">Configuración de examen estricto</p>
+                  <span className="rounded-full border border-white/20 bg-white/5 px-2 py-0.5 text-[11px] font-semibold text-slate-200">
+                    Examen
+                  </span>
+                </div>
+
+                <div className="mt-2 rounded-xl border border-white/20 bg-black/40 p-1">
+                  <div className="grid grid-cols-2 gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStrictDurationEnabled(true)
+                        setStrictWindowEnabled(false)
+                        setStrictStartsAt('')
+                        setStrictEndsAt('')
+                      }}
+                      className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${strictDurationEnabled
+                        ? 'bg-white/15 text-slate-100'
+                        : 'bg-transparent text-slate-300 hover:bg-white/10'
+                        }`}
+                    >
+                      Tiempo individual
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStrictDurationEnabled(false)
+                        setStrictWindowEnabled(true)
+                      }}
+                      className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${strictWindowEnabled
+                        ? 'bg-white/15 text-slate-100'
+                        : 'bg-transparent text-slate-300 hover:bg-white/10'
+                        }`}
+                    >
+                      Horario global
+                    </button>
+                  </div>
+                </div>
+
+                {strictDurationEnabled ? (
+                  <label className="mt-2 block text-sm text-slate-200">
+                    Minutos
+                    <input
+                      type="number"
+                      min="1"
+                      value={strictDurationMinutes}
+                      onChange={(event) => setStrictDurationMinutes(event.target.value)}
+                      className="mt-1 w-full rounded-lg border border-white/20 bg-black px-3 py-2 text-slate-100 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-300/20"
+                    />
+                    <span className="mt-1 block text-xs text-slate-400">Tiempo por intento.</span>
+                  </label>
+                ) : null}
+
+                <p className="mt-2 text-xs text-slate-400">
+                  Modo activo: {strictDurationEnabled ? 'Tiempo individual por usuario' : 'Horario global para todos'}.
+                </p>
+
+                {strictWindowEnabled ? (
+                  <div className="mt-2 grid gap-2">
+                    <label className="text-sm text-slate-200">
+                      Inicio
+                      <input
+                        type="datetime-local"
+                        value={strictStartsAt}
+                        onChange={(event) => setStrictStartsAt(event.target.value)}
+                        className="mt-1 w-full rounded-lg border border-white/20 bg-black px-3 py-2 text-slate-100 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-300/20"
+                      />
+                    </label>
+                    <label className="text-sm text-slate-200">
+                      Fin
+                      <input
+                        type="datetime-local"
+                        value={strictEndsAt}
+                        onChange={(event) => setStrictEndsAt(event.target.value)}
+                        className="mt-1 w-full rounded-lg border border-white/20 bg-black px-3 py-2 text-slate-100 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-300/20"
+                      />
+                    </label>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </article>
 
           <article
@@ -2355,13 +2757,54 @@ function FormBuilderPage(props) {
               return (
                 <article
                   key={question.id}
-                  className={`soft-enter overflow-hidden rounded-2xl border-2 bg-white/3 shadow-[0_14px_30px_rgba(2,6,23,0.2)] transition ${isActive ? 'border-primary-800 ring-2 ring-primary-400/20' : 'border-white/5 hover:border-white/15'}`}
+                  onDragOver={(event) => {
+                    event.preventDefault()
+                    if (draggedQuestionId && draggedQuestionId !== question.id) {
+                      setDragOverQuestionId(question.id)
+                    }
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    const draggedId = event.dataTransfer.getData('text/plain') || draggedQuestionId
+                    reorderQuestionsByDrag(draggedId, question.id)
+                    setDraggedQuestionId(null)
+                    setDragOverQuestionId(null)
+                  }}
+                  className={`soft-enter overflow-hidden rounded-2xl border-2 bg-white/3 shadow-[0_14px_30px_rgba(2,6,23,0.2)] transition ${isActive ? 'border-primary-800 ring-2 ring-primary-400/20' : 'border-white/5 hover:border-white/15'} ${dragOverQuestionId === question.id ? 'border-primary-300 ring-2 ring-primary-300/30' : ''}`}
                   onClick={() => setActiveQuestionId(question.id)}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-white/5 px-5 py-3">
-                    <div>
-                      <p className="text-xs font-semibold uppercase text-slate-300">Pregunta {index + 1}</p>
-                      <p className="text-xs text-slate-400">Seccion {question.section}</p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        draggable
+                        onDragStart={(event) => {
+                          setDraggedQuestionId(question.id)
+                          event.dataTransfer.effectAllowed = 'move'
+                          event.dataTransfer.setData('text/plain', question.id)
+                        }}
+                        onDragEnd={() => {
+                          setDraggedQuestionId(null)
+                          setDragOverQuestionId(null)
+                        }}
+                        onClick={(event) => event.stopPropagation()}
+                        className="inline-flex h-8 w-8 cursor-grab items-center justify-center rounded-lg border border-white/20 bg-black text-slate-300 transition hover:border-primary-300/35 hover:text-primary-200 active:cursor-grabbing"
+                        title="Arrastrar para reordenar"
+                        aria-label="Arrastrar para reordenar"
+                      >
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                          <circle cx="8" cy="6" r="1.4" />
+                          <circle cx="16" cy="6" r="1.4" />
+                          <circle cx="8" cy="12" r="1.4" />
+                          <circle cx="16" cy="12" r="1.4" />
+                          <circle cx="8" cy="18" r="1.4" />
+                          <circle cx="16" cy="18" r="1.4" />
+                        </svg>
+                      </button>
+                      <div>
+                        <p className="text-xs font-semibold uppercase text-slate-300">Pregunta {index + 1}</p>
+                        <p className="text-xs text-slate-400">Seccion {question.section}</p>
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -3050,165 +3493,7 @@ function FormBuilderPage(props) {
         </div>
       ) : null}
 
-      {!isPreviewOpen && (formMode === 'quiz' || formMode === 'strict') ? (
-        <aside className="fixed bottom-5 left-5 right-5 z-40 rounded-2xl border border-white/15 bg-white/5 p-4 shadow-[0_18px_48px_rgba(2,6,23,0.65)] backdrop-blur-xl lg:left-auto lg:right-5 lg:w-[21rem]">
-          {formMode === 'quiz' ? (
-            <>
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <p className="text-sm font-bold text-primary-100">Control en vivo del quiz</p>
-                <span className="rounded-full border border-primary-300/30 bg-primary-500/15 px-2 py-0.5 text-[11px] font-semibold text-primary-100">
-                  Tiempo real
-                </span>
-              </div>
 
-              <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-300">
-                Código de invitación
-              </label>
-              <div className="mb-3 flex gap-2">
-                <input
-                  type="text"
-                  value={joinCode}
-                  readOnly
-                  placeholder="Se generará al guardar..."
-                  className="flex-1 rounded-lg border border-white/20 bg-black px-3 py-2 text-center font-mono text-base font-bold text-slate-100"
-                />
-                {joinCode ? (
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(joinCode)
-                        setSuccessToast('Codigo copiado al portapapeles')
-                      } catch {
-                        setSaveError('No se pudo copiar el codigo')
-                      }
-                    }}
-                    className="rounded-lg border border-primary-300/35 bg-primary-500/20 px-3 py-2 text-sm font-semibold text-primary-100 transition hover:bg-primary-500/30"
-                  >
-                    Copiar
-                  </button>
-                ) : null}
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!controlPanelPublicId) return
-                    navigate(`/form/${controlPanelPublicId}/quiz-control`)
-                  }}
-                  disabled={!controlPanelPublicId}
-                  className="w-full cursor-pointer mt-10 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-emerald-500 disabled:bg-gray-500"
-                >
-                  Abrir panel de control
-                </button>
-              
-              </div>
-            </>
-          ) : null}
-
-          {formMode === 'strict' ? (
-            <>
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <p className="text-sm font-bold text-amber-100">Control de modo estricto</p>
-                <span className="rounded-full border border-amber-300/30 bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-100">
-                  Examen
-                </span>
-              </div>
-
-
-              <div className="mt-2 rounded-xl border border-white/20 bg-black/40 p-1">
-                <div className="grid grid-cols-2 gap-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStrictDurationEnabled(true)
-                      setStrictWindowEnabled(false)
-                      setStrictStartsAt('')
-                      setStrictEndsAt('')
-                    }}
-                    className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${strictDurationEnabled
-                      ? 'bg-primary-500 text-black'
-                      : 'bg-transparent text-slate-300 hover:bg-white/10'
-                      }`}
-                  >
-                    Tiempo individual
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStrictDurationEnabled(false)
-                      setStrictWindowEnabled(true)
-                    }}
-                    className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${strictWindowEnabled
-                      ? 'bg-primary-500 text-black'
-                      : 'bg-transparent text-slate-300 hover:bg-white/10'
-                      }`}
-                  >
-                    Horario global
-                  </button>
-                </div>
-              </div>
-
-              {strictDurationEnabled ? (
-                <label className="mt-2 block text-sm text-slate-200">
-                  Minutos
-                  <input
-                    type="number"
-                    min="1"
-                    value={strictDurationMinutes}
-                    onChange={(event) => setStrictDurationMinutes(event.target.value)}
-                    className="mt-1 w-full rounded-lg border border-white/20 bg-black px-3 py-2 text-slate-100 outline-none focus:border-amber-300 focus:ring-2 focus:ring-amber-300/20"
-                  />
-                  <span className="mt-1 block text-xs text-slate-400">Tiempo por intento.</span>
-                </label>
-              ) : null}
-
-              <p className="mt-2 text-xs text-slate-400">
-                Modo activo: {strictDurationEnabled ? 'Tiempo individual por usuario' : 'Horario global para todos'}.
-              </p>
-
-              {strictWindowEnabled ? (
-                <div className="mt-2 grid gap-2">
-                  <label className="text-sm text-slate-200">
-                    Inicio
-                    <input
-                      type="datetime-local"
-                      value={strictStartsAt}
-                      onChange={(event) => setStrictStartsAt(event.target.value)}
-                      className="mt-1 w-full rounded-lg border border-white/20 bg-black px-3 py-2 text-slate-100 outline-none focus:border-amber-300 focus:ring-2 focus:ring-amber-300/20"
-                    />
-                  </label>
-                  <label className="text-sm text-slate-200">
-                    Fin
-                    <input
-                      type="datetime-local"
-                      value={strictEndsAt}
-                      onChange={(event) => setStrictEndsAt(event.target.value)}
-                      className="mt-1 w-full rounded-lg border border-white/20 bg-black px-3 py-2 text-slate-100 outline-none focus:border-amber-300 focus:ring-2 focus:ring-amber-300/20"
-                    />
-                  </label>
-                </div>
-              ) : null}
-
-              {formStatus === 'published' ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!controlPanelPublicId) return
-                    navigate(`/form/${controlPanelPublicId}/strict-control`)
-                  }}
-                  disabled={!controlPanelPublicId}
-                  className="mt-3 w-full rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:bg-slate-600"
-                >
-                  Abrir monitor en tiempo real
-                </button>
-              ) : null}
-
-            </>
-          ) : null}
-        </aside>
-      ) : null}
 
     </main>
   )

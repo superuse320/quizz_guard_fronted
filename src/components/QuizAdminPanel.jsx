@@ -472,7 +472,7 @@ export default function QuizAdminPanel({ formId, onClose, formTitle, formDescrip
                   <div className="flex flex-col gap-2 sm:flex-row">
                               <button
                       onClick={finishQuiz}
-                      className=" cursor-pointer px-5 py-2.5 font-semibold text-red-600  transition hover:scale-[1.01] hover:from-rose-500 hover:to-red-400"
+                      className=" cursor-pointer px-5 py-1 font-semibold text-red-600  transition hover:scale-[1.01] hover:from-rose-500 hover:to-red-400"
                     >
                       Finalizar quiz
                     </button>
@@ -480,7 +480,7 @@ export default function QuizAdminPanel({ formId, onClose, formTitle, formDescrip
                       <button
                         onClick={startQuiz}
                         disabled={isStarting || participants.length === 0}
-                        className="rounded-lg bg-linear-to-r cursor-pointer from-emerald-600 to-teal-500 px-5 py-2.5 font-semibold text-white shadow-[0_8px_20px_rgba(16,185,129,0.35)] transition hover:scale-[1.01] hover:from-emerald-500 hover:to-teal-400 disabled:cursor-not-allowed disabled:from-slate-600 disabled:to-slate-600"
+                        className="rounded-lg bg-linear-to-r cursor-pointer from-green-600 to-green-500 px-5 py-1 font-semibold text-white shadow-[0_8px_20px_rgba(16,185,129,0.35)] transition hover:scale-[1.01] hover:from-emerald-500 hover:to-teal-400 disabled:cursor-not-allowed disabled:from-slate-600 disabled:to-slate-600"
                       >
                         {isStarting ? 'Iniciando...' : 'Iniciar quiz'}
                       </button>

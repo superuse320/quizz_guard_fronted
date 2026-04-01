@@ -78,19 +78,7 @@ export default function DashboardHeader({ email, name, showSearch = true }) {
                 {/* Menú apps y avatar */}
                 <div className="flex items-center gap-4 min-w-30 justify-end">
                     {/* Menú apps tipo Google */}
-                    <button className="p-2 rounded-full hover:bg-white/10 transition">
-                        <svg className="w-6 h-6 text-gray-400" fill="currentColor" viewBox="0 0 24 24">
-                            <circle cx="5" cy="5" r="2" />
-                            <circle cx="12" cy="5" r="2" />
-                            <circle cx="19" cy="5" r="2" />
-                            <circle cx="5" cy="12" r="2" />
-                            <circle cx="12" cy="12" r="2" />
-                            <circle cx="19" cy="12" r="2" />
-                            <circle cx="5" cy="19" r="2" />
-                            <circle cx="12" cy="19" r="2" />
-                            <circle cx="19" cy="19" r="2" />
-                        </svg>
-                    </button>
+                 
                     {/* Avatar circular con popup */}
                     <div className="relative" ref={avatarRef}>
                         <div className="flex items-center gap-2">

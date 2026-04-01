@@ -21,10 +21,55 @@ export default function QuizWaitingRoomPage() {
   const [showCountdown, setShowCountdown] = useState(false);
   
   const realtimeSubscriptionRef = useRef(null);
+  const presenceChannelRef = useRef(null);
+  const presenceParticipantsRef = useRef([]);
+  const selfParticipantRef = useRef(null);
   const participantsPollRef = useRef(null);
   const countdownStartedRef = useRef(false);
   const preloadedQuizDataRef = useRef(null);
   const preloadingQuizRef = useRef(false);
+
+  const mergeParticipantsLists = (baseList = [], liveList = []) => {
+    const byId = new Map();
+
+    for (const participant of liveList) {
+      if (!participant?.id) continue;
+      byId.set(participant.id, participant);
+    }
+
+    for (const participant of baseList) {
+      if (!participant?.id) continue;
+      byId.set(participant.id, {
+        ...byId.get(participant.id),
+        ...participant,
+      });
+    }
+
+    return Array.from(byId.values()).sort((a, b) => {
+      const aTime = new Date(a.joined_at || 0).getTime();
+      const bTime = new Date(b.joined_at || 0).getTime();
+      return aTime - bTime;
+    });
+  };
+
+  const parsePresenceParticipants = (presenceState = {}) => {
+    const collected = [];
+    Object.values(presenceState).forEach((entries) => {
+      if (!Array.isArray(entries)) return;
+      entries.forEach((entry) => {
+        if (!entry?.id) return;
+        collected.push({
+          id: entry.id,
+          user_id: entry.user_id || null,
+          participant_email: entry.participant_email || null,
+          participant_name: entry.participant_name || null,
+          status: entry.status || 'waiting',
+          joined_at: entry.joined_at || new Date().toISOString(),
+        });
+      });
+    });
+    return collected;
+  };
 
   const goToPlay = () => {
     navigate(`/quiz/play?sessionId=${sessionId}&participantId=${participantId}&formId=${formId}`, {
@@ -50,18 +95,22 @@ export default function QuizWaitingRoomPage() {
 
     // Suscribirse a cambios en tiempo real
     subscribeToRealtimeUpdates();
+    subscribeToPresence();
 
     // Fallback para no perder altas si el canal se demora o falla.
     participantsPollRef.current = setInterval(() => {
       if (!countdownStartedRef.current) {
         loadParticipantsList();
       }
-    }, 2500);
+    }, 1200);
 
     return () => {
       // Limpiar suscripción al desmontar
       if (realtimeSubscriptionRef.current) {
         realtimeSubscriptionRef.current.unsubscribe();
+      }
+      if (presenceChannelRef.current) {
+        presenceChannelRef.current.unsubscribe();
       }
       if (participantsPollRef.current) {
         clearInterval(participantsPollRef.current);
@@ -99,11 +148,14 @@ export default function QuizWaitingRoomPage() {
 
       const { data: meParticipant, error: meParticipantError } = await supabase
         .from('quiz_participants')
-        .select('status')
+        .select('id, user_id, participant_email, participant_name, status, joined_at')
         .eq('id', participantId)
         .maybeSingle();
 
       if (meParticipantError) throw meParticipantError;
+      if (meParticipant) {
+        selfParticipantRef.current = meParticipant;
+      }
 
       if (meParticipant?.status === 'finished') {
         goToPlay();
@@ -111,20 +163,58 @@ export default function QuizWaitingRoomPage() {
       }
 
       // 3. Cargar participantes
-      const { data: participantsData, error: participantsError } = await supabase
-        .from('quiz_participants')
-        .select('id, user_id, participant_email, participant_name, status, joined_at')
-        .eq('quiz_session_id', sessionId)
-        .order('joined_at', { ascending: true });
-
-      if (participantsError) throw participantsError;
-      setParticipants(participantsData || []);
+      const participantsData = await fetchParticipantsList();
+      setParticipants(mergeParticipantsLists(participantsData || [], presenceParticipantsRef.current));
 
       setLoading(false);
     } catch (err) {
       setError(err.message);
       setLoading(false);
     }
+  };
+
+  const subscribeToPresence = () => {
+    const channel = supabase
+      .channel(`quiz_waiting_presence_${sessionId}`, {
+        config: {
+          presence: {
+            key: participantId,
+          },
+        },
+      })
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        const onlineParticipants = parsePresenceParticipants(state);
+        presenceParticipantsRef.current = onlineParticipants;
+        setParticipants((current) => mergeParticipantsLists(current, onlineParticipants));
+      })
+      .subscribe(async (status) => {
+        if (status !== 'SUBSCRIBED') return;
+
+        if (!selfParticipantRef.current) {
+          const { data: meParticipant } = await supabase
+            .from('quiz_participants')
+            .select('id, user_id, participant_email, participant_name, status, joined_at')
+            .eq('id', participantId)
+            .maybeSingle();
+          if (meParticipant) {
+            selfParticipantRef.current = meParticipant;
+          }
+        }
+
+        if (selfParticipantRef.current) {
+          await channel.track({
+            id: selfParticipantRef.current.id,
+            user_id: selfParticipantRef.current.user_id,
+            participant_email: selfParticipantRef.current.participant_email,
+            participant_name: selfParticipantRef.current.participant_name,
+            status: selfParticipantRef.current.status || 'waiting',
+            joined_at: selfParticipantRef.current.joined_at,
+          });
+        }
+      });
+
+    presenceChannelRef.current = channel;
   };
 
   const subscribeToRealtimeUpdates = () => {
@@ -160,9 +250,10 @@ export default function QuizWaitingRoomPage() {
           event: '*',
           schema: 'public',
           table: 'quiz_participants',
-          filter: `quiz_session_id=eq.${sessionId}`,
         },
-        () => {
+        (payload) => {
+          const payloadSessionId = payload?.new?.quiz_session_id || payload?.old?.quiz_session_id;
+          if (payloadSessionId && payloadSessionId !== sessionId) return;
           // Recargar participantes cuando hay cambios
           loadParticipantsList();
         }
@@ -183,14 +274,8 @@ export default function QuizWaitingRoomPage() {
 
   const loadParticipantsList = async () => {
     try {
-      const { data: participantsData, error: participantsError } = await supabase
-        .from('quiz_participants')
-        .select('id, user_id, participant_email, participant_name, status, joined_at')
-        .eq('quiz_session_id', sessionId)
-        .order('joined_at', { ascending: true });
-
-      if (participantsError) throw participantsError;
-      setParticipants(participantsData || []);
+      const participantsData = await fetchParticipantsList();
+      setParticipants(mergeParticipantsLists(participantsData || [], presenceParticipantsRef.current));
 
       const me = (participantsData || []).find((participant) => participant.id === participantId);
       if (me?.status === 'finished') {
@@ -199,6 +284,27 @@ export default function QuizWaitingRoomPage() {
     } catch (err) {
       console.error('Error cargando participantes:', err);
     }
+  };
+
+  const fetchParticipantsList = async () => {
+    const { data: rpcData, error: rpcError } = await supabase
+      .rpc('get_quiz_waiting_participants', {
+        p_session_id: sessionId,
+        p_participant_id: participantId,
+      });
+
+    if (!rpcError && Array.isArray(rpcData)) {
+      return rpcData;
+    }
+
+    const { data: participantsData, error: participantsError } = await supabase
+      .from('quiz_participants')
+      .select('id, user_id, participant_email, participant_name, status, joined_at')
+      .eq('quiz_session_id', sessionId)
+      .order('joined_at', { ascending: true });
+
+    if (participantsError) throw participantsError;
+    return participantsData || [];
   };
 
   const getParticipantDisplayName = (participant) => {
@@ -376,7 +482,7 @@ export default function QuizWaitingRoomPage() {
         <div className="mt-8 text-center">
           <button
             onClick={() => setShowLeaveModal(true)}
-            className="rounded-lg border cursor-pointer border-rose-300/35 bg-rose-500/15 px-6 py-2.5 font-semibold text-rose-100 transition hover:bg-rose-500/25"
+            className="rounded-lg border cursor-pointer border-rose-300/35 bg-red-500 px-6 py-2.5 font-semibold text-rose-100 transition hover:bg-rose-500/25"
           >
             Abandonar sala
           </button>

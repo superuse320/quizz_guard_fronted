@@ -233,7 +233,7 @@ export default function AiGenerateModal({
                 <div className="mb-3 flex items-center justify-between">
                     <div className="flex items-center gap-3">
 
-                        <h3 className="text-2xl font-semibold text-white">Generar con IA</h3>
+                        <h3 className="text-xl font-semibold text-white">Generar con IA</h3>
                     </div>
                     <button
                         type="button"
@@ -258,7 +258,7 @@ export default function AiGenerateModal({
 
                         <button
                             type="button"
-                            className="mt-4 w-full cursor-pointer rounded-xl bg-linear-to-r from-primary-500/35 via-indigo-500/30 to-primary-400/30 px-4 py-2.5 text-lg font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="mt-4 w-full cursor-pointer rounded-xl bg-linear-to-r from-primary-500 via-indigo-700 to-primary-600 px-4 py-2.5 text-lg font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                             onClick={handleGenerate}
                             disabled={isBusy}
                         >
@@ -374,7 +374,7 @@ export default function AiGenerateModal({
                                                 </button>
                                             </div>
                                             {question.description ? <p className="mt-1 text-xs text-gray-300">{question.description}</p> : null}
-                                            <div className="mt-3 rounded-lg border border-white/10 bg-[#0a0f1d] p-3 text-gray-200">
+                                            <div className="mt-3 rounded-lg border border-white/10  p-3 text-gray-200">
                                                 {renderQuestionPreview(question, index)}
                                             </div>
                                         </article>

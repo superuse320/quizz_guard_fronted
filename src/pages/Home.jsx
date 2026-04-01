@@ -1,21 +1,37 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
+import { v4 as uuidv4 } from 'uuid';
 import DashboardHeader from '../components/common/DashboardHeader';
 import AiGenerateModal from '../components/common/AiGenerateModal';
 import FormCardThumbnail from '../components/common/FormCardThumbnail';
 import { useSession } from '../hooks/useSession';
 import { useProfile } from '../hooks/useProfile';
-import { useDeleteFormMutation, useGetFormsQuery } from '../redux/services/formsApi';
+import { normalizeFormPayload } from '../utils/formTemplateLoader';
+import { useDeleteFormMutation, useGetFormsQuery, useUpsertFormMutation } from '../redux/services/formsApi';
+import { supabase } from '../lib/supabase';
 import CreateFormIcon from '../assets/icons/CreateFormIcon';
 import GenerateAiIcon from '../assets/icons/GenerateAiIcon';
 import JoinCodeIcon from '../assets/icons/JoinCodeIcon';
+import { PencilIcon } from '../assets/icons/PencilIcon';
+
+const MIDNIGHT_BLUE_THEME = {
+  primary: '#4f7cff',
+  accent: '#38bdf8',
+  surface: '#0d1424',
+  bgFrom: '#02040b',
+  bgTo: '#090f1e',
+};
 
 export default function Home() {
   const { session } = useSession();
   const navigate = useNavigate();
   const [openMenuFormId, setOpenMenuFormId] = useState(null);
   const [showAiModal, setShowAiModal] = useState(false);
+  const [showTemplateModeModal, setShowTemplateModeModal] = useState(false);
+  const [pendingTemplate, setPendingTemplate] = useState(null);
+  const [creatingDraftFromTemplate, setCreatingDraftFromTemplate] = useState(false);
+  const [templateModeError, setTemplateModeError] = useState('');
   const menuRef = useRef(null);
   const userId = session?.user?.id;
   const { profile } = useProfile(userId);
@@ -23,7 +39,173 @@ export default function Home() {
     skip: !userId,
   });
   const [deleteForm] = useDeleteFormMutation();
+  const [upsertForm] = useUpsertFormMutation();
   const searchQuery = useSelector((state) => state.homeUi?.searchQuery || '');
+
+  const generateQuizCode = () =>
+    Math.random().toString(36).slice(2, 8).toUpperCase();
+
+  const toIsoDateTimeOrNull = (value) => {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toISOString();
+  };
+
+  const createDraftFromTemplate = async (rawTemplate, selectedMode) => {
+    const normalized = normalizeFormPayload(rawTemplate);
+    const questions = Array.isArray(normalized.questions) ? normalized.questions : [];
+    const sectionCount = Math.max(1, ...questions.map((q) => Number(q.section) || 1));
+    const aiDraftTheme = {
+      ...MIDNIGHT_BLUE_THEME,
+      coverImage: normalized?.theme?.coverImage || '',
+    };
+
+    const strictDurationEnabled = selectedMode === 'strict';
+    const strictWindowEnabled = false;
+    const strictDurationMinutes = 60;
+    const strictSettings = {
+      strict_duration_enabled: strictDurationEnabled,
+      strict_duration_minutes: strictDurationMinutes,
+      strict_window_enabled: strictWindowEnabled,
+      strict_starts_at: null,
+      strict_ends_at: null,
+      strict_require_auth: selectedMode === 'strict',
+    };
+
+    const formData = {
+      title: normalized.title || 'Formulario IA',
+      description: normalized.description || '',
+      status: 'draft',
+      form_mode: selectedMode,
+      is_quiz: selectedMode === 'quiz',
+      requires_auth: selectedMode === 'strict',
+      opened_at: strictWindowEnabled ? toIsoDateTimeOrNull(normalized.strictStartsAt) : null,
+      closed_at: strictWindowEnabled ? toIsoDateTimeOrNull(normalized.strictEndsAt) : null,
+      settings: strictSettings,
+      theme: aiDraftTheme,
+      cover_image_url: aiDraftTheme.coverImage || null,
+      join_code: selectedMode === 'quiz' ? generateQuizCode() : null,
+    };
+
+    const formRow = await upsertForm({
+      editMode: false,
+      publicId: null,
+      formData,
+    }).unwrap();
+
+    const formId = formRow.id;
+    const publicId = formRow.public_id;
+
+    const sectionMap = new Map();
+    const sectionsPayload = [];
+    for (let section = 1; section <= sectionCount; section += 1) {
+      const sectionId = uuidv4();
+      sectionMap.set(section, sectionId);
+      sectionsPayload.push({
+        id: sectionId,
+        form_id: formId,
+        title: `Sección ${section}`,
+        description: '',
+        position: section,
+      });
+    }
+
+    if (sectionsPayload.length > 0) {
+      const { error: sectionsInsertError } = await supabase
+        .from('form_sections')
+        .insert(sectionsPayload);
+      if (sectionsInsertError) throw sectionsInsertError;
+    }
+
+    const questionsPayload = [];
+    const optionsPayload = [];
+
+    for (let idx = 0; idx < questions.length; idx += 1) {
+      const q = questions[idx];
+      const questionId = uuidv4();
+
+      questionsPayload.push({
+        id: questionId,
+        form_id: formId,
+        section_id: sectionMap.get(Number(q.section) || 1),
+        position: idx + 1,
+        type: q.type,
+        title: q.title,
+        description: q.description,
+        required: Boolean(q.required),
+        required_condition_enabled: Boolean(q.requiredConditionEnabled),
+        required_condition_question_id: null,
+        required_condition_operator: '=',
+        required_condition_value: q.requiredConditionValue ?? null,
+        points: q.points,
+        settings: {
+          short_answer_correct: q.type === 'short_answer' ? (q.shortAnswerCorrect || '').trim() : null,
+          short_answer_variants: q.type === 'short_answer'
+            ? String(q.shortAnswerVariants || '')
+              .split(/[\n,;]+/)
+              .map((item) => item.trim())
+              .filter(Boolean)
+            : [],
+          number_correct: q.type === 'number' && q.numberCorrect !== '' ? Number(q.numberCorrect) : null,
+          date_correct: q.type === 'date' ? (q.dateCorrect || null) : null,
+          time_correct: q.type === 'time' ? (q.timeCorrect || null) : null,
+        },
+      });
+
+      if (Array.isArray(q.options) && q.options.length > 0) {
+        for (let optIdx = 0; optIdx < q.options.length; optIdx += 1) {
+          optionsPayload.push({
+            id: uuidv4(),
+            question_id: questionId,
+            position: optIdx + 1,
+            label: q.options[optIdx],
+            value: null,
+            is_correct: Array.isArray(q.correctAnswers) ? q.correctAnswers.includes(optIdx) : false,
+            metadata: {},
+          });
+        }
+      }
+    }
+
+    if (questionsPayload.length > 0) {
+      const { error: questionsInsertError } = await supabase
+        .from('form_questions')
+        .insert(questionsPayload);
+      if (questionsInsertError) throw questionsInsertError;
+    }
+
+    const optionBatchSize = 250;
+    for (let start = 0; start < optionsPayload.length; start += optionBatchSize) {
+      const batch = optionsPayload.slice(start, start + optionBatchSize);
+      const { error: optionsInsertError } = await supabase
+        .from('form_question_options')
+        .insert(batch);
+      if (optionsInsertError) throw optionsInsertError;
+    }
+
+    return publicId;
+  };
+
+  const handleSelectTemplateMode = async (selectedMode) => {
+    if (!pendingTemplate || creatingDraftFromTemplate) return;
+
+    setTemplateModeError('');
+    setCreatingDraftFromTemplate(true);
+
+    try {
+      const publicId = await createDraftFromTemplate(pendingTemplate, selectedMode);
+      setShowTemplateModeModal(false);
+      setPendingTemplate(null);
+      navigate(`/form/${publicId}/edit`, {
+        state: { successToast: 'Borrador creado desde plantilla IA.' },
+      });
+    } catch (error) {
+      setTemplateModeError(error?.data || error?.message || 'No se pudo crear el borrador desde la plantilla.');
+    } finally {
+      setCreatingDraftFromTemplate(false);
+    }
+  };
 
   const getFormModeMeta = (formMode) => {
     const mode = String(formMode || 'normal').toLowerCase();
@@ -43,7 +225,7 @@ export default function Home() {
       return { label: 'Publicado', className: 'text-emerald-300', isPublished: true };
     }
 
-    return { label: 'Borrador', className: 'bg-slate-500/25 border-slate-300/35 text-slate-100', isPublished: false };
+    return { label: 'Borrador', className: 'bg-slate-500/25 text-slate-100', isPublished: false };
   };
 
   const formatHumanDate = (value) => {
@@ -184,7 +366,7 @@ export default function Home() {
 
 
       <div className="bg-black w-full relative flex-1 h-[140vh]">
-        <div className='bg-white/5 w-full h-full   z-30 mx-auto px-24 py-4'>
+        <div className='bg-white/5 w-full h-full   z-30 mx-auto px-28 py-4'>
 
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
           <h2 className="text-xl  text-white tracking-tight">Formularios recientes</h2>
@@ -192,7 +374,26 @@ export default function Home() {
         </div>
 
         {loading ? (
-          <div className="text-gray-400 text-center py-16">Cargando...</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+            {Array.from({ length: 8 }).map((_, idx) => (
+              <article key={`form-skeleton-${idx}`} className="overflow-hidden rounded-xl border border-white/8 bg-white/[0.035] shadow-[0_8px_24px_rgba(0,0,0,0.2)]">
+                <div className="h-32 border-b border-white/8 p-3 shimmer-strip-dark-soft">
+                  <div className="h-full w-full rounded-md bg-white/4.5" />
+                </div>
+                <div className="px-4 pt-3 pb-2">
+                  <div className="mb-3 flex items-center justify-between">
+                    <span className="h-5 w-20 rounded-full bg-white/7.5 shimmer-strip-dark-soft" />
+                    <span className="h-5 w-16 rounded-md bg-white/7.5 shimmer-strip-dark-soft" />
+                  </div>
+                  <div className="h-5 w-4/5 rounded-md bg-white/7.5 shimmer-strip-dark-soft" />
+                </div>
+                <div className="border-t border-white/8 px-4 py-3 flex items-center justify-between">
+                  <span className="h-4 w-28 rounded-md bg-white/7.5 shimmer-strip-dark-soft" />
+                  <span className="h-8 w-8 rounded-full bg-white/7.5 shimmer-strip-dark-soft" />
+                </div>
+              </article>
+            ))}
+          </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
 
@@ -227,11 +428,11 @@ export default function Home() {
                   const publishMeta = getPublishStatusMeta(form.status);
                   const isQuiz = String(form.form_mode || '').toLowerCase() === 'quiz';
                   const isStrict = String(form.form_mode || '').toLowerCase() === 'strict';
-                  const isStrictOrNormal = ['strict', 'normal'].includes(String(form.form_mode || 'normal').toLowerCase());
+                  const isNormal = String(form.form_mode || 'normal').toLowerCase() === 'normal';
                   return (
                 <article
                   key={form.id}
-                  className="relative cursor-pointer overflow-visible rounded-lg border border-white/12 bg-white/5 shadow-sm hover:shadow-xl hover:-translate-y-0.5 transition"
+                  className="relative flex h-full cursor-pointer flex-col overflow-visible rounded-lg border border-white/12 bg-white/5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-xl"
                   onClick={() => navigate(`/form/${form.public_id}/edit`)}
                 >
                   <button
@@ -255,10 +456,11 @@ export default function Home() {
                     </div>
                   </button>
 
-                  <div className="px-4 pt-2 pb-2">
+                  <div className="flex-1 px-4 pt-2 pb-2">
                     <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <span className={`inline-flex items-center text-[11px] font-bold uppercase tracking-wide ${publishMeta.isPublished ? 'px-0 py-0' : 'rounded-full border px-2.5 py-1'} ${publishMeta.className}`}>
+                      <span className={`inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide ${publishMeta.isPublished ? 'px-0 py-0' : 'rounded-full px-2.5 py-1'} ${publishMeta.className}`}>
                         {publishMeta.isPublished ? <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-300" /> : null}
+                        {!publishMeta.isPublished ? <PencilIcon className="h-3 w-3" /> : null}
                         {publishMeta.label}
                       </span>
                       {!isQuiz ? (
@@ -283,7 +485,7 @@ export default function Home() {
                             </button>
                           ) : null}
 
-                          {isStrictOrNormal ? (
+                          {isNormal ? (
                             <button
                               type="button"
                               onClick={(event) => {
@@ -336,12 +538,12 @@ export default function Home() {
                         </button>
                       ) : null}
                     </div>
-                    <h3 className="text-[22px] leading-7 font-medium text-white truncate">{form.title || 'Formulario sin título'}</h3>
+                    <h3 className="text-[19px] leading-6 font-medium text-white truncate">{form.title || 'Formulario sin título'}</h3>
                   </div>
 
-                  <div className="relative border-t border-white/8 px-4 py-3 flex items-center justify-between" ref={openMenuFormId === form.id ? menuRef : null}>
-                    <div className="flex items-center gap-2 text-sm text-gray-300">
-                      <svg className="h-4 w-4 text-blue-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <div className="relative mt-auto flex items-center justify-between border-t border-white/8 px-4 py-3" ref={openMenuFormId === form.id ? menuRef : null}>
+                    <div className="flex items-center gap-1.5 text-xs text-gray-300">
+                      <svg className="h-3.5 w-3.5 text-blue-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                         <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
                         <line x1="16" y1="2" x2="16" y2="6" />
                         <line x1="8" y1="2" x2="8" y2="6" />
@@ -364,6 +566,18 @@ export default function Home() {
 
                     {openMenuFormId === form.id ? (
                       <div className="absolute right-2 top-11 z-20 w-44 rounded-lg border border-white/10 bg-[#10141d] shadow-2xl p-1">
+                        {isStrict ? (
+                          <button
+                            className="w-full text-left px-3 py-2 text-sm rounded text-blue-300 hover:bg-blue-500/10"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              navigate(`/form/${form.public_id}/respuestas`);
+                              setOpenMenuFormId(null);
+                            }}
+                          >
+                            Respuestas
+                          </button>
+                        ) : null}
                         <button
                           className="w-full text-left px-3 py-2 text-sm rounded text-red-400 hover:bg-red-500/10"
                           onClick={async (event) => {
@@ -400,11 +614,161 @@ export default function Home() {
         onClose={() => setShowAiModal(false)}
         onUseTemplate={(template) => {
           setShowAiModal(false)
-          navigate('/form', {
-            state: { aiGeneratedTemplate: template },
-          })
+          setPendingTemplate(template)
+          setTemplateModeError('')
+          setShowTemplateModeModal(true)
         }}
       />
+
+      {showTemplateModeModal ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/80 backdrop-blur-xl p-4 overflow-hidden">
+          {/* Fondo decorativo */}
+          <div className="absolute inset-0 pointer-events-none overflow-hidden">
+            <div className="absolute top-0 right-1/4 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl" />
+            <div className="absolute bottom-1/4 left-1/3 w-80 h-80 bg-blue-500/5 rounded-full blur-3xl" />
+            <div className="absolute top-1/3 right-0 w-72 h-72 bg-amber-500/5 rounded-full blur-3xl" />
+          </div>
+
+          <div className="w-full max-w-4xl rounded-3xl border border-white/15 bg-black/90 p-8 shadow-2xl backdrop-blur-sm overflow-y-auto max-h-[90vh] relative z-10">
+            <div className="mb-6 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-widest text-emerald-400/80">Selecciona tu tipo</p>
+                <h3 className="mt-3 text-4xl font-bold text-white">¿Qué quieres crear?</h3>
+                <p className="mt-2 text-sm text-slate-300">Elige la opción que mejor se adapte a lo que necesitas</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (creatingDraftFromTemplate) return;
+                  setShowTemplateModeModal(false);
+                  setPendingTemplate(null);
+                }}
+                className="rounded-lg border border-white/15 bg-white/5 hover:bg-white/15 px-4 py-2 text-sm text-slate-200 transition hover:text-white disabled:cursor-not-allowed disabled:opacity-50 backdrop-blur shrink-0 cursor-pointer"
+                disabled={creatingDraftFromTemplate}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="grid gap-5 md:grid-cols-3 mb-6">
+              <button
+                type="button"
+                onClick={() => handleSelectTemplateMode('normal')}
+                disabled={creatingDraftFromTemplate}
+                className="group relative overflow-hidden rounded-2xl border border-emerald-500/40 bg-black/60 p-5 text-left shadow-lg hover:shadow-emerald-500/20 transition-all duration-300 hover:border-emerald-400/80 hover:bg-black/40 disabled:cursor-not-allowed disabled:opacity-60 hover:-translate-y-1 backdrop-blur cursor-pointer"
+              >
+                <div className="absolute inset-0 opacity-0 group-hover:opacity-5 bg-linear-to-br from-emerald-400 to-transparent transition-opacity duration-300" />
+                <div className="relative">
+                  <div className="inline-flex items-center justify-center w-11 h-11 rounded-lg bg-emerald-500/20 mb-4 group-hover:bg-emerald-500/40 transition-colors">
+                    <CreateFormIcon className="w-5 h-5 text-emerald-300" />
+                  </div>
+                  <p className="text-lg font-bold text-emerald-100">Formulario</p>
+                  <p className="mt-1 text-xs text-emerald-300/70 font-medium">Para recopilar opiniones</p>
+                  <div className="mt-4 space-y-3">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-300 mb-2">Úsalo para:</p>
+                      <ul className="text-xs text-slate-400 space-y-1">
+                        <li className="flex gap-2"><svg className="w-4 h-4 text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Encuestas</li>
+                        <li className="flex gap-2"><svg className="w-4 h-4 text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Comentarios</li>
+                        <li className="flex gap-2"><svg className="w-4 h-4 text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Registros</li>
+                      </ul>
+                    </div>
+                    <div className="space-y-1 pt-1 border-t border-emerald-500/10">
+                      <div className="flex gap-2 items-center text-xs text-slate-500 font-medium mt-2">
+                        <svg className="w-4 h-4 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="1"></circle><path d="M12 1v6m0 6v6"></path><path d="M4.22 4.22l4.24 4.24m3.08 3.08l4.24 4.24"></path><path d="M1 12h6m6 0h6"></path><path d="M4.22 19.78l4.24-4.24m3.08-3.08l4.24-4.24"></path></svg>
+                        Sin prisa
+                      </div>
+                      <p className="text-xs text-slate-500">Completa cuando quieras</p>
+                    </div>
+                  </div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSelectTemplateMode('quiz')}
+                disabled={creatingDraftFromTemplate}
+                className="group relative overflow-hidden rounded-2xl border border-blue-500/40 bg-black/60 p-5 text-left shadow-lg hover:shadow-blue-500/20 transition-all duration-300 hover:border-blue-400/80 hover:bg-black/40 disabled:cursor-not-allowed disabled:opacity-60 hover:-translate-y-1 backdrop-blur cursor-pointer"
+              >
+                <div className="absolute inset-0 opacity-0 group-hover:opacity-5 bg-linear-to-br from-blue-400 to-transparent transition-opacity duration-300" />
+                <div className="relative">
+                  <div className="inline-flex items-center justify-center w-11 h-11 rounded-lg bg-blue-500/20 mb-4 group-hover:bg-blue-500/40 transition-colors">
+                    <JoinCodeIcon className="w-5 h-5 text-blue-300" />
+                  </div>
+                  <p className="text-lg font-bold text-blue-100">Quiz</p>
+                  <p className="mt-1 text-xs text-blue-300/70 font-medium">Para competir y aprender</p>
+                  <div className="mt-4 space-y-3">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-300 mb-2">Úsalo para:</p>
+                      <ul className="text-xs text-slate-400 space-y-1">
+                        <li className="flex gap-2"><svg className="w-4 h-4 text-blue-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Jugar</li>
+                        <li className="flex gap-2"><svg className="w-4 h-4 text-blue-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Competir</li>
+                        <li className="flex gap-2"><svg className="w-4 h-4 text-blue-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Divertirse</li>
+                      </ul>
+                    </div>
+                    <div className="space-y-1 pt-1 border-t border-blue-500/10">
+                      <div className="flex gap-2 items-center text-xs text-slate-500 font-medium mt-2">
+                        <svg className="w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M4 9h16M4 15h16"></path></svg>
+                        Rápido y vivo
+                      </div>
+                      <p className="text-xs text-slate-500">Puntajes en tiempo real</p>
+                    </div>
+                  </div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSelectTemplateMode('strict')}
+                disabled={creatingDraftFromTemplate}
+                className="group relative overflow-hidden rounded-2xl border border-amber-500/40 bg-black/60 p-5 text-left shadow-lg hover:shadow-amber-500/20 transition-all duration-300 hover:border-amber-400/80 hover:bg-black/40 disabled:cursor-not-allowed disabled:opacity-60 hover:-translate-y-1 backdrop-blur cursor-pointer"
+              >
+                <div className="absolute inset-0 opacity-0 group-hover:opacity-5 bg-linear-to-br from-amber-400 to-transparent transition-opacity duration-300" />
+                <div className="relative">
+                  <div className="inline-flex items-center justify-center w-11 h-11 rounded-lg bg-amber-500/20 mb-4 group-hover:bg-amber-500/40 transition-colors">
+                    <GenerateAiIcon className="w-5 h-5 text-amber-300" />
+                  </div>
+                  <p className="text-lg font-bold text-amber-100">Examen</p>
+                  <p className="mt-1 text-xs text-amber-300/70 font-medium">Para evaluar correctamente</p>
+                  <div className="mt-4 space-y-3">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-300 mb-2">Úsalo para:</p>
+                      <ul className="text-xs text-slate-400 space-y-1">
+                        <li className="flex gap-2"><svg className="w-4 h-4 text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Exámenes</li>
+                        <li className="flex gap-2"><svg className="w-4 h-4 text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Pruebas serias</li>
+                        <li className="flex gap-2"><svg className="w-4 h-4 text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Certificación</li>
+                      </ul>
+                    </div>
+                    <div className="space-y-1 pt-1 border-t border-amber-500/10">
+                      <div className="flex gap-2 items-center text-xs text-slate-500 font-medium mt-2">
+                        <svg className="w-4 h-4 text-amber-400" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1L9.464 9.036H1.036L7.764 13.764L5.228 21.8L12 17.072L18.772 21.8L16.236 13.764L22.964 9.036H14.536L12 1Z"></path></svg>
+                        Seguro
+                      </div>
+                      <p className="text-xs text-slate-500">Supervisado y controlado</p>
+                    </div>
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            {templateModeError ? (
+              <div className="mt-4 rounded-lg border border-rose-400/40 bg-rose-500/10 px-4 py-2 text-sm text-rose-200">
+                {templateModeError}
+              </div>
+            ) : null}
+
+            {creatingDraftFromTemplate ? (
+              <div className="mt-4 flex items-center justify-center gap-2 text-sm font-semibold text-sky-200">
+                <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <circle cx="12" cy="12" r="10" strokeWidth="2" strokeOpacity="0.25" />
+                  <path d="M4 12a8 8 0 0114.928-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+                Preparando tu formulario...
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </main>
   )
 }

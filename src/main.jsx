@@ -33,11 +33,11 @@ createRoot(document.getElementById('root')).render(
           <Route element={<SessionGate requireAuth={true} redirectTo="/home" />}>
             <Route path="/main" element={<Home />} />
           </Route>
+          <Route path="/formulario/:public_id" element={<FormPublicView />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/protected" element={<ProtectedPage />} />
             <Route path="/form" element={<FormBuilderPage />} />
             <Route path="/form/:public_id/edit" element={<FormBuilderPage editMode={true} />} />
-            <Route path="/formulario/:public_id" element={<FormPublicView />} />
             <Route path="/form/:public_id/respuestas" element={<FormAnswersPage />} />
             <Route path="/form/:public_id/respuestas/:submission_id" element={<FormAnswerDetailPage />} />
             <Route path="/form/:public_id/quiz-control" element={<QuizControlPage />} />

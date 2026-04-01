@@ -795,7 +795,7 @@ export default function QuizPlayPage() {
     : null;
 
   return (
-    <div className="min-h-screen bg-linear-to-br from-slate-950 via-slate-900 to-slate-950 p-4 sm:p-6">
+    <div className="min-h-screen bg-black px-4 py-5 sm:px-6 sm:py-7">
       {scoreToast.visible && (
         <div className="fixed bottom-5 left-1/2 z-50 w-[min(960px,calc(100%-24px))] -translate-x-1/2">
           <div className={`rounded-2xl border px-6 py-5 shadow-[0_20px_60px_rgba(0,0,0,0.55)] backdrop-blur-md ${
@@ -814,19 +814,19 @@ export default function QuizPlayPage() {
         </div>
       )}
 
-      <div className="max-w-5xl mx-auto">
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-5 shadow-2xl backdrop-blur-xl mb-6">
-          <div className="flex justify-between items-center">
-            <h1 className="text-2xl font-black text-white tracking-tight">{formData?.title}</h1>
-            <div className="flex items-center gap-3">
-              <div className="rounded-xl border border-amber-300/40 bg-amber-500/15 px-4 py-2 text-right">
-                <p className="text-[10px] uppercase tracking-[0.14em] text-amber-200/90">Puntos</p>
-                <p className="text-lg font-black leading-tight text-amber-100">{Number(liveScore || 0).toFixed(2)}</p>
+      <div className="mx-auto max-w-5xl">
+        <div className="mb-8 border-b border-white/10 pb-5 sm:mb-9 sm:pb-6">
+          <div className="flex flex-wrap items-end justify-between gap-4 sm:gap-5">
+            <h1 className="text-xl font-black leading-tight tracking-tight text-white sm:text-2xl">{formData?.title}</h1>
+            <div className="flex items-center gap-4">
+              <div className="text-right">
+                <p className="text-[10px] uppercase tracking-[0.14em] text-amber-300/80">Puntos</p>
+                <p className="text-lg font-black leading-tight text-amber-200 sm:text-xl">{Number(liveScore || 0).toFixed(2)}</p>
               </div>
-              <div className={`px-4 py-2 rounded-full font-bold ${
+              <div className={`rounded-full px-3 py-1 text-xs font-bold ${
                 sessionStatus === 'in_progress'
-                  ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40'
-                  : 'bg-rose-500/20 text-rose-200 border border-rose-400/40'
+                  ? 'bg-emerald-500/18 text-emerald-200'
+                  : 'bg-rose-500/18 text-rose-200'
               }`}>
                 {sessionStatus === 'in_progress' ? 'En progreso' : 'Finalizado'}
               </div>
@@ -835,22 +835,25 @@ export default function QuizPlayPage() {
         </div>
 
         {currentQuestion && (
-          <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 sm:p-8 shadow-2xl mb-6 backdrop-blur-xl">
-            <div className="mb-6 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="inline-flex items-center gap-2 bg-blue-500/20 text-blue-100 px-4 py-2 rounded-full text-sm font-bold border border-blue-400/40">
-                  <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-500 text-white text-xs font-black">
-                    {currentQuestionIndex + 1}
-                  </span>
-                  Pregunta {currentQuestionIndex + 1} de {totalQuestions}
-                </span>
-                <span className="inline-block bg-white/10 text-slate-200 px-3 py-1 rounded-lg text-xs font-semibold capitalize border border-white/15">
+          <div className="mb-8 px-1 sm:px-2">
+            <div className="mb-7 flex flex-wrap items-center justify-between gap-4 sm:mb-8">
+              <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Progreso</p>
+                  <div className="mt-1.5 flex items-center gap-2.5">
+                    <p className="text-[13px] font-black leading-none text-white sm:text-sm">Pregunta {currentQuestionIndex + 1} de {totalQuestions}</p>
+                    <span className="inline-flex h-7 min-w-12 items-center justify-center rounded-md bg-blue-500/20 px-2.5 text-[11px] font-extrabold text-blue-100 ring-1 ring-blue-300/35">
+                      {currentQuestionIndex + 1}/{totalQuestions}
+                    </span>
+                  </div>
+                </div>
+                <span className="inline-block rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold capitalize text-slate-200">
                   {getQuestionTypeLabel(currentQuestion.type)}
                 </span>
               </div>
-              <div className="text-right flex items-center gap-2">
+              <div className="flex items-center gap-2 text-right">
                 {currentQuestion.required && <span className="text-rose-400 text-lg font-bold">*</span>}
-                <span className={`inline-block px-3 py-1 rounded-lg text-xs font-bold border ${
+                <span className={`inline-block rounded-lg border px-3 py-1.5 text-xs font-bold ${
                   Number(questionTimeLeft) <= 3
                     ? 'bg-rose-500/20 text-rose-200 border-rose-400/50'
                     : 'bg-blue-500/20 text-blue-100 border-blue-400/40'
@@ -860,7 +863,7 @@ export default function QuizPlayPage() {
               </div>
             </div>
 
-            <div className="mb-6 h-2 w-full rounded-full bg-slate-800 border border-white/10 overflow-hidden">
+            <div className="mb-8 h-2 w-full overflow-hidden rounded-full border border-white/10 bg-slate-800">
               <div
                 className={`h-full transition-all duration-300 ${
                   Number(questionTimeLeft) <= 3
@@ -871,43 +874,38 @@ export default function QuizPlayPage() {
               />
             </div>
 
-            <h2 className="text-3xl sm:text-4xl font-black text-white mb-2 tracking-tight">{currentQuestion.title}</h2>
+            <h2 className="mb-3 text-2xl font-black leading-tight tracking-tight text-white sm:text-3xl">{currentQuestion.title}</h2>
             {currentQuestion.description && (
-              <p className="text-slate-300 mb-6">{currentQuestion.description}</p>
+              <p className="mb-8 max-w-4xl text-sm leading-relaxed text-slate-300 sm:text-[15px]">{currentQuestion.description}</p>
             )}
 
-            {Number(questionTimeLeft) === 0 && (
-              <div className="mb-6 rounded-xl border border-amber-300/50 bg-amber-500/15 px-4 py-3 text-amber-100 text-sm font-semibold">
-                El tiempo llego a 0. Puedes seguir respondiendo y pasar cuando quieras con Siguiente.
-              </div>
-            )}
-
-            <div className="mb-8">
+            <div className="mb-10">
               {currentQuestion.type === 'choice_unique' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
                   {currentQuestionOptions.map((option, index) => {
-                    const style = getChoicePalette(index);
                     const isSelected = answers[currentQuestion.id] === option.id;
                     return (
                     <div
                       key={option.id}
                       onClick={() => handleAnswerChange(currentQuestion.id, option.id)}
-                      className={`group flex items-center justify-between gap-4 p-5 border-2 rounded-2xl cursor-pointer transition-all duration-200 bg-linear-to-br ${
+                      className={`group flex min-h-19 cursor-pointer items-center justify-between gap-4 rounded-2xl border px-4 py-3.5 transition-all duration-200 sm:px-5 ${
                         isSelected
-                          ? `${style.selected} ring-4 ${style.ring} shadow-[0_0_0_2px_rgba(255,255,255,0.18),0_18px_40px_rgba(15,23,42,0.55)] scale-[1.015]`
-                          : `${style.bg} ${style.border} hover:scale-[1.01] hover:border-white/35`
+                          ? 'border-primary-200 bg-primary-400/25 shadow-[0_0_0_1px_rgba(191,219,254,0.7),0_20px_40px_rgba(2,6,23,0.55)]'
+                            : 'border-white/12 bg-white/3 hover:border-white/30 hover:bg-white/5'
                       }`}
                     >
                       <div className="flex items-center gap-4">
-                        <div className={`h-9 w-9 rounded-lg font-black text-sm flex items-center justify-center ${style.badge}`}>
+                        <div className={`flex h-9 w-9 items-center justify-center rounded-full border text-sm font-black ${isSelected ? 'border-primary-100 bg-primary-200/40 text-white shadow-[0_0_18px_rgba(147,197,253,0.45)]' : 'border-white/25 text-slate-200'}`}>
                           {String.fromCharCode(65 + index)}
                         </div>
-                        <span className="font-extrabold tracking-tight text-slate-100 text-lg">
+                        <span className={`text-[15px] font-semibold leading-snug tracking-tight sm:text-base ${isSelected ? 'text-white' : 'text-slate-100'}`}>
                           {option.label}
                         </span>
                       </div>
-                      <div className={`h-7 w-7 rounded-full border-2 flex items-center justify-center transition-all ${isSelected ? 'border-white bg-white/90' : 'border-white/40 bg-transparent'}`}>
-                        {isSelected ? <div className="h-3 w-3 rounded-full bg-slate-900" /> : null}
+                      <div className={`flex h-7 w-7 items-center justify-center rounded-full border transition-all ${isSelected ? 'border-primary-50 bg-white text-primary-700 shadow-[0_0_14px_rgba(255,255,255,0.55)]' : 'border-white/25 text-transparent'}`}>
+                        <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                          <path fillRule="evenodd" d="M16.704 5.29a1 1 0 010 1.415l-7.2 7.2a1 1 0 01-1.415 0l-3.2-3.2a1 1 0 111.415-1.415l2.492 2.493 6.493-6.493a1 1 0 011.415 0z" clipRule="evenodd" />
+                        </svg>
                       </div>
                     </div>
                     );
@@ -1205,11 +1203,11 @@ export default function QuizPlayPage() {
               )}
             </div>
 
-            <div className="flex gap-4 pt-6 border-t border-white/10">
+            <div className="flex gap-3 border-t border-white/10 pt-6 sm:gap-4 sm:pt-7">
               <button
                 onClick={handlePreviousQuestion}
                 disabled
-                className="flex-1 px-4 py-3 bg-white/5 text-slate-500 rounded-lg font-semibold transition-all cursor-not-allowed"
+                className="flex-1 cursor-not-allowed rounded-lg bg-white/5 px-4 py-3 text-sm font-semibold text-slate-500 transition-all sm:text-base"
               >
                 Anterior bloqueado
               </button>
@@ -1218,14 +1216,14 @@ export default function QuizPlayPage() {
                 <button
                   onClick={handleSubmitQuiz}
                   disabled={submitting}
-                  className="flex-1 px-4 py-3 bg-linear-to-r from-emerald-500 to-teal-500 text-white rounded-lg hover:brightness-110 disabled:opacity-60 font-semibold transition-all"
+                  className="flex-1 rounded-lg bg-linear-to-r cursor-pointer from-green-500 to-green-600 px-4 py-3 text-sm font-semibold text-white transition-all hover:brightness-110 disabled:opacity-60 sm:text-base"
                 >
                   {submitting ? 'Enviando...' : 'Enviar Quiz'}
                 </button>
               ) : (
                 <button
                   onClick={handleNextQuestion}
-                  className="flex-1 px-4 py-3 bg-linear-to-r from-blue-500 to-blue-600 text-white rounded-lg hover:brightness-110 font-semibold transition-all"
+                  className="flex-1 cursor-pointer rounded-lg bg-linear-to-r from-blue-500 to-blue-600 px-4 py-3 text-sm font-semibold text-white transition-all hover:brightness-110 sm:text-base"
                 >
                   Siguiente
                 </button>
