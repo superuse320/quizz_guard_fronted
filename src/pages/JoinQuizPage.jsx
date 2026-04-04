@@ -10,6 +10,7 @@ export default function JoinQuizPage() {
   const [participantName, setParticipantName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [validatedSession, setValidatedSession] = useState(null);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showInvalidCodeModal, setShowInvalidCodeModal] = useState(false);
@@ -32,6 +33,86 @@ export default function JoinQuizPage() {
     setParticipantName(resolvedName);
   }, [user, profile]);
 
+  const validateCodeAndGetSession = async () => {
+    const normalizedCode = joinCode.trim().toUpperCase();
+
+    if (!normalizedCode) {
+      setError('Por favor ingresa el código del quiz');
+      return null;
+    }
+
+    // 1. Buscar el formulario por join_code
+    const { data: formData, error: formError } = await supabase
+      .from('forms')
+      .select('id')
+      .eq('join_code', normalizedCode)
+      .single();
+
+    if (formError || !formData) {
+      setShowInvalidCodeModal(true);
+      return null;
+    }
+
+    // 2. Buscar la sesión más reciente en estado 'waiting'
+    const { data: sessionData, error: sessionError } = await supabase
+      .from('quiz_sessions')
+      .select('*')
+      .eq('form_id', formData.id)
+      .eq('status', 'waiting')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (sessionError || !sessionData) {
+      setError('No hay una sesión de quiz activa con ese código. Pídele al instructor que inicie una.');
+      return null;
+    }
+
+    if (sessionData.status !== 'waiting') {
+      if (sessionData.status === 'in_progress') {
+        setError('El quiz ya ha comenzado. No puedes unirte ahora.');
+      } else if (sessionData.status === 'finished') {
+        setError('El quiz ya ha finalizado');
+      }
+      return null;
+    }
+
+    const { count: participantsCount, error: countError } = await supabase
+      .from('quiz_participants')
+      .select('id', { count: 'exact', head: true })
+      .eq('quiz_session_id', sessionData.id)
+      .neq('status', 'finished');
+
+    if (countError) {
+      setError('No se pudo validar el cupo de participantes. Intenta nuevamente.');
+      return null;
+    }
+
+    if (Number(participantsCount || 0) >= 10) {
+      setError('La sala alcanzo el limite de 10 participantes.');
+      setShowRoomFullModal(true);
+      return null;
+    }
+
+    return sessionData;
+  };
+
+  const handleValidateCode = async (e) => {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+
+    try {
+      const sessionData = await validateCodeAndGetSession();
+      if (!sessionData) return;
+      setValidatedSession(sessionData);
+    } catch (err) {
+      setError('Error inesperado: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleJoinQuiz = async (e) => {
     e.preventDefault();
     setError(null);
@@ -42,85 +123,30 @@ export default function JoinQuizPage() {
       return;
     }
 
+    if (!validatedSession) {
+      setError('Primero valida el código del quiz.');
+      return;
+    }
+
+    if (!participantName.trim()) {
+      setError('Por favor ingresa tu nombre para unirte');
+      return;
+    }
+
     setLoading(true);
 
     try {
-      // Validar que el usuario ingresó un código
-      if (!joinCode.trim()) {
-        setError('Por favor ingresa el código del quiz');
-        setLoading(false);
+      // Revalidar cupo y estado justo antes de unirse
+      const latestSession = await validateCodeAndGetSession();
+      if (!latestSession || latestSession.id !== validatedSession.id) {
+        setValidatedSession(null);
         return;
       }
 
-      if (!participantName.trim()) {
-        setError('Por favor ingresa tu nombre para unirte');
-        setLoading(false);
-        return;
-      }
-
-      // 1. Buscar el formulario por join_code
-      const { data: formData, error: formError } = await supabase
-        .from('forms')
-        .select('id')
-        .eq('join_code', joinCode)
-        .single();
-
-      if (formError || !formData) {
-        setShowInvalidCodeModal(true);
-        setLoading(false);
-        return;
-      }
-
-      // 2. Buscar la sesión más reciente en estado 'waiting'
-      const { data: sessionData, error: sessionError } = await supabase
-        .from('quiz_sessions')
-        .select('*')
-        .eq('form_id', formData.id)
-        .eq('status', 'waiting')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
-
-      if (sessionError || !sessionData) {
-        setError('No hay una sesión de quiz activa con ese código. Pídele al instructor que inicie una.');
-        setLoading(false);
-        return;
-      }
-
-      // Verificar que la sesión esté en estado 'waiting'
-      if (sessionData.status !== 'waiting') {
-        if (sessionData.status === 'in_progress') {
-          setError('El quiz ya ha comenzado. No puedes unirte ahora.');
-        } else if (sessionData.status === 'finished') {
-          setError('El quiz ya ha finalizado');
-        }
-        setLoading(false);
-        return;
-      }
-
-      const { count: participantsCount, error: countError } = await supabase
-        .from('quiz_participants')
-        .select('id', { count: 'exact', head: true })
-        .eq('quiz_session_id', sessionData.id)
-        .neq('status', 'finished');
-
-      if (countError) {
-        setError('No se pudo validar el cupo de participantes. Intenta nuevamente.');
-        setLoading(false);
-        return;
-      }
-
-      if (Number(participantsCount || 0) >= 10) {
-        setError('La sala alcanzo el limite de 10 participantes.');
-        setShowRoomFullModal(true);
-        setLoading(false);
-        return;
-      }
-
-      // 2. Unirse a la sesión
+      // 3. Unirse a la sesión
       const { data: participantData, error: joinError } = await supabase
         .rpc('join_quiz_session', {
-          p_session_id: sessionData.id,
+          p_session_id: latestSession.id,
           p_email: null,
           p_name: participantName.trim(),
         });
@@ -137,12 +163,12 @@ export default function JoinQuizPage() {
         return;
       }
 
-      // 3. Navegar a la sala de espera con los datos de la sesión
+      // 4. Navegar a la sala de espera con los datos de la sesión
       navigate('/quiz/waiting-room', {
         state: {
-          sessionId: sessionData.id,
+          sessionId: latestSession.id,
           participantId: participantData,
-          formId: sessionData.form_id,
+          formId: latestSession.form_id,
         },
       });
     } catch (err) {
@@ -153,7 +179,7 @@ export default function JoinQuizPage() {
   };
 
   return (
-    <div className="min-h-screen w-full bg-[#020617] relative flex items-center justify-center p-4 overflow-hidden">
+    <div className="min-h-screen w-full bg-[#020617] relative flex flex-col items-center justify-center p-4 overflow-hidden">
       <div
         className="absolute inset-0 z-0"
         style={{
@@ -233,62 +259,86 @@ export default function JoinQuizPage() {
         </div>
       </header>
 
-      <div className="relative z-10 w-full max-w-md rounded-2xl border border-violet-300/20 bg-[#080d1a]/85 backdrop-blur-xl shadow-[0_0_0_1px_rgba(255,255,255,0.06),0_20px_60px_rgba(0,0,0,0.6),0_0_30px_rgba(124,58,237,0.2)] p-8 mt-20 overflow-hidden">
+      <div className="relative flex-1 flex flex-col items-center justify-center z-10 w-full max-w-xl rounded-2xl">
         <div className="pointer-events-none absolute inset-0 opacity-40" style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)', backgroundSize: '18px 18px' }} />
         <div className="pointer-events-none absolute -top-24 -right-16 h-48 w-48 rounded-full bg-violet-500/20 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-24 -left-16 h-48 w-48 rounded-full bg-cyan-500/20 blur-3xl" />
         <div className="relative z-10">
           {/* Encabezado */}
           <div className="text-center mb-8">
-            <h1 className="text-3xl font-black text-white mb-2 tracking-wide">Únete al Quiz</h1>
-            <p className="text-slate-300">Ingresa el código para empezar a jugar</p>
+            <h1 className="text-6xl font-black text-white mb-2 tracking-wide">QUIZZIA</h1>
           </div>
-
           {/* Formulario */}
-          <form onSubmit={handleJoinQuiz} className="space-y-4">
+          <form onSubmit={validatedSession ? handleJoinQuiz : handleValidateCode} className=" w-full space-y-4">
             {/* Código del Quiz */}
-            <div>
-              <label htmlFor="joinCode" className="block text-sm font-semibold text-slate-200 mb-2">
-                Código del Quiz
-              </label>
-              <input
-                id="joinCode"
-                type="text"
-                value={joinCode}
-                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                placeholder="Ej: ABC123DEF456"
-                className="w-full px-4 py-3 border-2 border-violet-300/30 bg-[#030712]/80 text-violet-100 rounded-xl focus:outline-none focus:border-violet-400 focus:ring-4 focus:ring-violet-400/20 text-center text-lg font-black tracking-[0.25em] placeholder:text-slate-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_0_18px_rgba(139,92,246,0.12)]"
-                disabled={loading}
-              />
-              <p className="text-xs text-slate-400 mt-1">
-                Pide el código al instructor
-              </p>
-            </div>
-
-            {/* Nombre del participante */}
-            <div>
-              <label htmlFor="participantName" className="block text-sm font-semibold text-slate-200 mb-2">
-                Tu nombre
-              </label>
-              <input
-                id="participantName"
-                type="text"
-                value={participantName}
-                onChange={(e) => setParticipantName(e.target.value)}
-                placeholder="Juan Pérez"
-                className="w-full px-4 py-3 border-2 border-cyan-300/25 bg-[#030712]/80 text-cyan-100 rounded-xl focus:outline-none focus:border-cyan-400 focus:ring-4 focus:ring-cyan-400/20 placeholder:text-slate-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_0_16px_rgba(34,211,238,0.1)]"
-                disabled={loading}
-              />
-            </div>
-
+            {!validatedSession ? (
+              <div>
+                <div className="flex w-full items-center gap-2 rounded-xl border-2 border-violet-300/30 bg-[#030712]/80 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_0_18px_rgba(139,92,246,0.12)] focus-within:border-violet-400 focus-within:ring-4 focus-within:ring-violet-400/20">
+                  <input
+                    id="joinCode"
+                    type="text"
+                    value={joinCode}
+                    onChange={(e) => {
+                      setJoinCode(e.target.value.toUpperCase());
+                      if (validatedSession) setValidatedSession(null);
+                    }}
+                    placeholder="Introducir un código de participación"
+                    className="min-w-0 flex-1 bg-transparent px-3 w-72 py-3 text-violet-100 text-lg font-bold placeholder:text-slate-500 focus:outline-none"
+                    disabled={loading}
+                  />
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className={`shrink-0 rounded-lg px-5 py-1 font-black text-white transition-all ${loading
+                      ? 'bg-slate-600 cursor-not-allowed'
+                      : 'bg-linear-to-r from-primary-500 to-primary-500 hover:from-primary-400 hover:to-primary-400 active:scale-95 cursor-pointer  shadow-lg shadow-primary-900/35'
+                      }`}
+                  >
+                    {loading ? 'Validando...' : 'Unirme'}
+                  </button>
+                </div>
+                <p className="text-xs text-center text-slate-400 mt-1">
+                  Pide el código al instructor
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="bg-emerald-500/10 border border-emerald-300/25 rounded-xl p-3">
+                  <p className="text-sm text-emerald-200">Código validado: <strong>{joinCode.trim().toUpperCase()}</strong></p>
+                </div>
+                <div>
+                  <label htmlFor="participantName" className="block text-sm font-semibold text-slate-200 mb-2">
+                    Tu nombre
+                  </label>
+                  <input
+                    id="participantName"
+                    type="text"
+                    value={participantName}
+                    onChange={(e) => setParticipantName(e.target.value)}
+                    placeholder="Juan Pérez"
+                    className="w-full px-4 py-3 border-2 border-cyan-300/25 bg-[#030712]/80 text-cyan-100 rounded-xl focus:outline-none focus:border-cyan-400 focus:ring-4 focus:ring-cyan-400/20 placeholder:text-slate-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_0_16px_rgba(34,211,238,0.1)]"
+                    disabled={loading}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setValidatedSession(null)}
+                  className="w-full py-2 rounded-xl border border-white/20 text-slate-200 hover:text-white hover:border-white/40 transition cursor-pointer"
+                  disabled={loading}
+                >
+                  Cambiar código
+                </button>
+              </div>
+            )}
+            
             {/* Mensaje de usuario autenticado */}
-            {user && (
+            {/* {user && (
               <div className="bg-violet-500/10 border border-violet-300/20 rounded-xl p-3">
                 <p className="text-sm text-violet-100">
                   ✓ Conectado como <strong>{user.email}</strong>
                 </p>
               </div>
-            )}
+            )} */}
 
             {/* Mensajes de error */}
             {error && (
@@ -298,16 +348,18 @@ export default function JoinQuizPage() {
             )}
 
             {/* Botón de envío */}
-            <button
-              type="submit"
-              disabled={loading}
-              className={`w-full py-3 rounded-xl font-black text-white transition-all ${loading
-                  ? 'bg-slate-600 cursor-not-allowed'
-                  : 'bg-linear-to-r from-primary-400 to-primary-600 hover:from-primary-500 cursor-pointer hover:to-primary-500 active:scale-95 shadow-lg shadow-violet-900/50 border border-violet-300/20'
-                }`}
-            >
-              {loading ? 'Uniéndote...' : user ? 'Unirse al Quiz' : 'Inicia sesión para unirte'}
-            </button>
+            {validatedSession ? (
+              <button
+                type="submit"
+                disabled={loading}
+                className={`w-full py-3 rounded-xl font-black text-white transition-all ${loading
+                    ? 'bg-slate-600 cursor-not-allowed'
+                    : 'bg-linear-to-r from-primary-400 to-primary-600 hover:from-primary-500 cursor-pointer hover:to-primary-500 active:scale-95 shadow-lg shadow-violet-900/50 border border-violet-300/20'
+                  }`}
+              >
+                {loading ? 'Uniéndote...' : (user ? 'Unirse al Quiz' : 'Inicia sesión para unirte')}
+              </button>
+            ) : null}
           </form>
 
           {/* Footer con enlace a home */}
@@ -319,6 +371,7 @@ export default function JoinQuizPage() {
               Volver al inicio
             </button>
           </div>
+
         </div>
       </div>
 
@@ -363,6 +416,7 @@ export default function JoinQuizPage() {
           </div>
         </div>
       )}
+        <p className='text-white'>Crea tu propio quiz GRATIS en <span className='font-bold underline'>quizzia.com</span></p>
 
       <LoginForm open={isLoginModalOpen} onClose={() => setIsLoginModalOpen(false)} />
     </div>

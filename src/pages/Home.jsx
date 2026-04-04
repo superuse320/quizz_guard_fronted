@@ -28,6 +28,7 @@ export default function Home() {
   const navigate = useNavigate();
   const [openMenuFormId, setOpenMenuFormId] = useState(null);
   const [showAiModal, setShowAiModal] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const [showTemplateModeModal, setShowTemplateModeModal] = useState(false);
   const [pendingTemplate, setPendingTemplate] = useState(null);
   const [creatingDraftFromTemplate, setCreatingDraftFromTemplate] = useState(false);
@@ -265,6 +266,9 @@ export default function Home() {
   const liquidGlassCardClass =
     'group relative w-full cursor-pointer overflow-hidden text-left min-h-36 px-5 pt-9 pb-4 rounded-2xl border border-white/25 bg-white/[0.08] backdrop-blur-xl supports-[backdrop-filter]:backdrop-saturate-150 shadow-[0_12px_38px_rgba(8,12,20,0.45),inset_0_1px_0_rgba(255,255,255,0.38),inset_0_-1px_0_rgba(255,255,255,0.08)] hover:-translate-y-1 hover:bg-white/[0.12] hover:border-white/35 hover:shadow-[0_20px_50px_rgba(10,14,24,0.6),inset_0_1px_0_rgba(255,255,255,0.55),inset_0_-1px_0_rgba(255,255,255,0.14)] transition-all duration-500';
 
+  // Action-specific card class with more rounded corners
+  const actionCardClass = liquidGlassCardClass.replace('rounded-2xl', 'rounded-3xl');
+
   const normalizeSearchValue = (value) =>
     String(value || '')
       .normalize('NFD')
@@ -300,310 +304,308 @@ export default function Home() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [openMenuFormId]);
 
+  useEffect(() => {
+    const t = setTimeout(() => setMounted(true), 20);
+    return () => clearTimeout(t);
+  }, []);
+
   if (!session || !session.user) {
     return null;
   }
 
   return (
-    <main className=" bg-black text-white">
+    <main className="bg-black text-white">
       <DashboardHeader email={session.user.email} name={profile?.name} />
-        <div className="pointer-events-none absolute left-1/2 translate-y-30 -translate-x-1/2 size-[45vw] bg-primary-600 rounded-full blur-[290px] opacity-70 " />
+      <div className="pointer-events-none absolute left-1/2 translate-y-30 -translate-x-1/2 size-[45vw] bg-primary-600 rounded-full blur-[290px] opacity-70 " />
 
-      <section className="relative px-6 md:px-20 pt-6 pb-8 overflow-hidden">
-        <div className="relative flex flex-col gap-4 md:gap-0 md:flex-row md:items-stretch md:justify-center md:-space-x-4">
-          <div className="relative md:w-72">
-            <div className="pointer-events-none absolute -top-6 left-1/2 -translate-x-1/2 h-11 w-11 rounded-full bg-[#0f131d] border border-white/15 shadow-md grid place-items-center z-40">
-              <CreateFormIcon className="w-5 h-5 text-white" />
-            </div>
-            <button
-              className={liquidGlassCardClass}
-              style={{ clipPath: 'polygon(0 0, 94% 0, 100% 100%, 0 100%)' }}
-              onClick={() => navigate('/form')}
-            >
-              <span className="pointer-events-none absolute inset-0 bg-linear-to-b from-white/5 via-white/0 cursor-pointer to-transparent opacity-75" />
-              <span className="pointer-events-none absolute -left-1/2 top-[-120%] h-[280%] w-[48%] rotate-22 bg-linear-to-r from-transparent via-white/55 to-transparent opacity-0 blur-md transition-all duration-700 group-hover:left-[125%] group-hover:opacity-100" />
-              <span className="pointer-events-none absolute inset-x-[18%] top-1 h-8 rounded-full bg-white/10 blur-xl opacity-55" />
-              <p className="text-center text-white font-semibold text-xl leading-6 mt-1 tracking-tight">Crear Formulario</p>
-              <p className="text-center text-[#8b93a7] text-sm leading-5 mt-2">Empieza desde cero</p>
-            </button>
+
+      <div className='flex justify-center my-12'>
+        <button className='relative cursor-pointer'
+          onClick={() => navigate('/form')}
+
+        >
+          <svg data-v-c5091d05="" width="164" height="72" viewBox="0 0 164 72" fill="none" xmlns="http://www.w3.org/2000/svg"><path data-v-c5091d05="" d="M148.839 0C152.916 0 156.34 3.06492 156.791 7.11621L163.013 63.1162C163.54 67.8551 159.83 71.9999 155.062 72H7.9986C3.5805 71.9998 -0.0014065 68.4181 -0.00140381 64L-0.000427246 8C-0.000358583 3.58188 3.58149 0.000169046 7.99957 0H148.839Z" class="fill-white/10 tab-shadow group-hover:fill-wds-light-300"></path></svg>
+          <div className="pointer-events-none absolute -top-6 left-1/2 -translate-x-1/2 h-11 w-11 rounded-full bg-linear-to-t from-white/20 to-black/50 shadow-md grid place-items-center z-40">
+            <CreateFormIcon className="w-5 h-5 text-white" />
+          </div>
+          <div className='absolute top-5 flex flex-col text-center w-full'>
+            <span className="text-center text-white font-semibold text-md  mt-1 ">Crear </span>
+            <span className="text-center text-white/80 font-light text-xs  ">Formulario</span>
+          </div>
+        </button>
+        <button className='relative cursor-pointer'
+          onClick={() => setShowAiModal(true)}
+
+        >
+          <svg data-v-c5091d05="" width="164" height="72" viewBox="0 0 164 72" xmlns="http://www.w3.org/2000/svg"><path data-v-c5091d05="" d="M155.062 0C159.83 7.62629e-05 163.54 4.14491 163.013 8.88379L156.791 64.8838C156.34 68.9351 152.916 72 148.839 72H15.1597C11.0835 72 7.65888 68.9351 7.20856 64.8838L0.986876 8.88379C0.460402 4.1449 4.17001 0 8.93805 0H155.062Z" class="fill-white/10"></path></svg>
+
+          <div className="pointer-events-none absolute -top-6 left-1/2 -translate-x-1/2 h-11 w-11 rounded-full bg-linear-to-t from-white/20 to-black/50 shadow-md grid place-items-center z-40">
+            <GenerateAiIcon className="w-5 h-5 text-white" />
+
+          </div>
+          <div className='absolute top-5 flex flex-col text-center w-full'>
+            <span className="text-center text-white font-semibold text-md  mt-1 ">Generar </span>
+            <span className="text-center text-white/80 font-light text-xs  ">Con IA</span>
+          </div>
+        </button>
+        <button className='relative cursor-pointer'
+          onClick={() => navigate('/join-quiz')}
+
+        >
+          <svg data-v-c5091d05="" width="164" height="72" viewBox="0 0 164 72" fill="none" xmlns="http://www.w3.org/2000/svg"><path data-v-c5091d05="" d="M156 0C160.418 0 164 3.58172 164 8V64C164 68.4183 160.418 72 156 72H8.93716C4.16905 72 0.459363 67.8552 0.985987 63.1162L7.20962 7.11621C7.65995 3.06493 11.0845 0 15.1608 0H156Z" class="fill-white/10 tab-shadow"></path></svg>
+
+          <div className="pointer-events-none absolute -top-6 left-1/2 -translate-x-1/2 h-11 w-11 rounded-full bg-linear-to-t from-white/20 to-black/50 shadow-md grid place-items-center z-40">
+            <JoinCodeIcon className="w-5 h-5 text-white" />
+
+          </div>
+          <div className='absolute top-5 flex flex-col text-center w-full'>
+            <span className="text-center text-white font-semibold text-md  mt-1 ">Unirme </span>
+            <span className="text-center text-white/80 font-light text-xs  ">a un QUIZZ</span>
+          </div>
+        </button>
+      </div>
+
+
+
+      <div className="bg-black w-full  relative flex-1 h-[140vh] rounded-t-2xl">
+        <div className='bg-white/5 w-full h-full   z-30 mx-auto px-28 py-4  rounded-t-2xl'>
+
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+            <h2 className="text-xl font-bold  text-white tracking-tight">Formularios recientes</h2>
+
           </div>
 
-          <div className="relative md:w-72 z-10">
-            <div className="pointer-events-none absolute -top-6 left-1/2 -translate-x-1/2 h-11 w-11 rounded-full bg-[#0f131d] border border-white/15 shadow-md grid place-items-center z-40">
-              <GenerateAiIcon className="w-5 h-5 text-white" />
-            </div>
-            <button
-              className={liquidGlassCardClass}
-              style={{ clipPath: 'polygon(2% 0, 98% 0, 88% 100%, 8% 100%)' }}
-              onClick={() => setShowAiModal(true)}
-            >
-              <span className="pointer-events-none absolute inset-0 bg-linear-to-b from-white/5 via-white/0 cursor-pointer to-transparent opacity-75" />
-              <span className="pointer-events-none absolute -left-1/2 top-[-120%] h-[280%] w-[48%] rotate-22 bg-linear-to-r from-transparent via-white/55 to-transparent opacity-0 blur-md transition-all duration-700 group-hover:left-[125%] group-hover:opacity-100" />
-              <span className="pointer-events-none absolute inset-x-[18%] top-1 h-8 rounded-full bg-white/10 blur-xl opacity-55" />
-              <p className="text-center text-[#dce2ef] font-semibold text-xl leading-6 mt-1 tracking-tight">Generar con IA</p>
-              <p className="text-center text-[#8b93a7] text-sm leading-5 mt-2">Crea preguntas rapido</p>
-            </button>
-          </div>
-
-          <div className="relative md:w-72 md:-ml-2">
-            <div className="pointer-events-none absolute -top-6 left-1/2 -translate-x-1/2 h-11 w-11 rounded-full bg-[#0f131d] border border-white/15 shadow-md grid place-items-center z-40">
-              <JoinCodeIcon className="w-5 h-5 text-white" />
-            </div>
-            <button
-              className={liquidGlassCardClass}
-              style={{ clipPath: 'polygon(10% 0, 100% 0, 100% 100%, 0 100%)' }}
-              onClick={() => navigate('/join-quiz')}
-            >
-              <span className="pointer-events-none absolute inset-0 bg-linear-to-b from-white/5 via-white/0 cursor-pointer to-transparent opacity-75" />
-              <span className="pointer-events-none absolute -left-1/2 top-[-120%] h-[280%] w-[48%] rotate-22 bg-linear-to-r from-transparent via-white/55 to-transparent opacity-0 blur-md transition-all duration-700 group-hover:left-[125%] group-hover:opacity-100" />
-              <span className="pointer-events-none absolute inset-x-[18%] top-1 h-8 rounded-full bg-white/10 blur-xl opacity-55" />
-              <p className="text-center text-[#dce2ef] font-semibold text-xl leading-6 mt-1 tracking-tight">Unirme con código</p>
-              <p className="text-center text-[#8b93a7] text-sm leading-5 mt-2">Ingresa a una sesion</p>
-            </button>
-          </div>
-        </div>
-      </section>
-
-
-      <div className="bg-black w-full relative flex-1 h-[140vh]">
-        <div className='bg-white/5 w-full h-full   z-30 mx-auto px-28 py-4'>
-
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
-          <h2 className="text-xl  text-white tracking-tight">Formularios recientes</h2>
-
-        </div>
-
-        {loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-            {Array.from({ length: 8 }).map((_, idx) => (
-              <article key={`form-skeleton-${idx}`} className="overflow-hidden rounded-xl border border-white/8 bg-white/[0.035] shadow-[0_8px_24px_rgba(0,0,0,0.2)]">
-                <div className="h-32 border-b border-white/8 p-3 shimmer-strip-dark-soft">
-                  <div className="h-full w-full rounded-md bg-white/4.5" />
-                </div>
-                <div className="px-4 pt-3 pb-2">
-                  <div className="mb-3 flex items-center justify-between">
-                    <span className="h-5 w-20 rounded-full bg-white/7.5 shimmer-strip-dark-soft" />
-                    <span className="h-5 w-16 rounded-md bg-white/7.5 shimmer-strip-dark-soft" />
+          {loading ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+              {Array.from({ length: 8 }).map((_, idx) => (
+                <article key={`form-skeleton-${idx}`} className="overflow-hidden rounded-xl border border-white/8 bg-white/[0.035] shadow-[0_8px_24px_rgba(0,0,0,0.2)]">
+                  <div className="h-32 border-b border-white/8 p-3 shimmer-strip-dark-soft">
+                    <div className="h-full w-full rounded-md bg-white/4.5" />
                   </div>
-                  <div className="h-5 w-4/5 rounded-md bg-white/7.5 shimmer-strip-dark-soft" />
-                </div>
-                <div className="border-t border-white/8 px-4 py-3 flex items-center justify-between">
-                  <span className="h-4 w-28 rounded-md bg-white/7.5 shimmer-strip-dark-soft" />
-                  <span className="h-8 w-8 rounded-full bg-white/7.5 shimmer-strip-dark-soft" />
-                </div>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-
-
-            {/* Cards de formularios */}
-            {forms.length === 0 ? (
-              <div className="col-span-full py-16 text-center">
-                <div className="mx-auto mb-4 h-16 w-16 rounded-2xl border border-white/15 grid place-items-center">
-                  <svg className="h-8 w-8 text-primary-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 3.75h6A2.25 2.25 0 0 1 15.75 6v.75h.75A2.25 2.25 0 0 1 18.75 9v10.5A2.25 2.25 0 0 1 16.5 21.75h-9A2.25 2.25 0 0 1 5.25 19.5V9A2.25 2.25 0 0 1 7.5 6.75h.75V6A2.25 2.25 0 0 1 10.5 3.75Z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 11.25h6M9 14.25h6M9 17.25h3" />
-                  </svg>
-                </div>
-                <h3 className="text-2xl font-semibold text-white">Aún no has creado formularios</h3>
-                <p className="mt-2 text-sm text-gray-400">Empieza creando uno nuevo desde las opciones superiores.</p>
-              </div>
-            ) : filteredForms.length === 0 ? (
-              <div className="col-span-full py-16 text-center">
-                <div className="mx-auto mb-4 h-16 w-16 rounded-2xl border border-white/15 grid place-items-center">
-                  <svg className="h-8 w-8 text-primary-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
-                    <circle cx="11" cy="11" r="7" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="m20 20-3.6-3.6" />
-                  </svg>
-                </div>
-                <h3 className="text-2xl font-semibold text-white">No se encontraron formularios</h3>
-                <p className="mt-2 text-sm text-gray-400">Prueba con otro término en el buscador.</p>
-              </div>
-            ) : (
-              filteredForms.map((form) => (
-                (() => {
-                  const modeMeta = getFormModeMeta(form.form_mode);
-                  const publishMeta = getPublishStatusMeta(form.status);
-                  const isQuiz = String(form.form_mode || '').toLowerCase() === 'quiz';
-                  const isStrict = String(form.form_mode || '').toLowerCase() === 'strict';
-                  const isNormal = String(form.form_mode || 'normal').toLowerCase() === 'normal';
-                  return (
-                <article
-                  key={form.id}
-                  className="relative flex h-full cursor-pointer flex-col overflow-visible rounded-lg border border-white/12 bg-white/5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-xl"
-                  onClick={() => navigate(`/form/${form.public_id}/edit`)}
-                >
-                  <button
-                    className="w-full text-left"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      navigate(`/form/${form.public_id}/edit`);
-                    }}
-                  >
-                    <div className="relative h-32 border-b border-white/8 px-3 pt-3 pb-2">
-                      <span className={`absolute right-5 top-4 z-10 inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${modeMeta.className}`}>
-                        {modeMeta.label}
-                      </span>
-                      <FormCardThumbnail
-                        formMode={form.form_mode}
-                        previewQuestions={form.previewQuestions || []}
-                        formTheme={form.theme}
-                        formTitle={form.title}
-                        formDescription={form.description}
-                      />
+                  <div className="px-4 pt-3 pb-2">
+                    <div className="mb-3 flex items-center justify-between">
+                      <span className="h-5 w-20 rounded-full bg-white/7.5 shimmer-strip-dark-soft" />
+                      <span className="h-5 w-16 rounded-md bg-white/7.5 shimmer-strip-dark-soft" />
                     </div>
-                  </button>
+                    <div className="h-5 w-4/5 rounded-md bg-white/7.5 shimmer-strip-dark-soft" />
+                  </div>
+                  <div className="border-t border-white/8 px-4 py-3 flex items-center justify-between">
+                    <span className="h-4 w-28 rounded-md bg-white/7.5 shimmer-strip-dark-soft" />
+                    <span className="h-8 w-8 rounded-full bg-white/7.5 shimmer-strip-dark-soft" />
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
 
-                  <div className="flex-1 px-4 pt-2 pb-2">
-                    <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <span className={`inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide ${publishMeta.isPublished ? 'px-0 py-0' : 'rounded-full px-2.5 py-1'} ${publishMeta.className}`}>
-                        {publishMeta.isPublished ? <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-300" /> : null}
-                        {!publishMeta.isPublished ? <PencilIcon className="h-3 w-3" /> : null}
-                        {publishMeta.label}
-                      </span>
-                      {!isQuiz ? (
-                        <div className="ml-auto flex items-center gap-2">
-                          {isStrict ? (
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                navigate(`/form/${form.public_id}/strict-control`);
-                              }}
-                              className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-amber-300/35 px-2.5 py-1 text-xs font-semibold text-amber-200 transition hover:bg-amber-500/10"
-                              title="Panel de control estricto"
-                            >
-                              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                <rect x="3" y="3" width="7" height="7" rx="1" />
-                                <rect x="14" y="3" width="7" height="4" rx="1" />
-                                <rect x="14" y="10" width="7" height="11" rx="1" />
-                                <rect x="3" y="12" width="7" height="9" rx="1" />
-                              </svg>
-                              Dashboard
-                            </button>
-                          ) : null}
 
-                          {isNormal ? (
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                navigate(`/form/${form.public_id}/respuestas`);
-                              }}
-                              className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-blue-300/35 px-2.5 py-1 text-xs font-semibold text-blue-200 transition hover:bg-blue-500/10"
-                            >
-                              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                <path d="M3 5h18" />
-                                <path d="M3 12h18" />
-                                <path d="M3 19h18" />
-                              </svg>
-                              Respuestas
-                            </button>
-                          ) : null}
+              {/* Cards de formularios */}
+              {forms.length === 0 ? (
+                <div className="col-span-full py-16 text-center">
+                  <div className="mx-auto mb-4 h-16 w-16 rounded-2xl border border-white/15 grid place-items-center">
+                    <svg className="h-8 w-8 text-primary-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 3.75h6A2.25 2.25 0 0 1 15.75 6v.75h.75A2.25 2.25 0 0 1 18.75 9v10.5A2.25 2.25 0 0 1 16.5 21.75h-9A2.25 2.25 0 0 1 5.25 19.5V9A2.25 2.25 0 0 1 7.5 6.75h.75V6A2.25 2.25 0 0 1 10.5 3.75Z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 11.25h6M9 14.25h6M9 17.25h3" />
+                    </svg>
+                  </div>
+                  <h3 className="text-2xl font-semibold text-white">Aún no has creado formularios</h3>
+                  <p className="mt-2 text-sm text-gray-400">Empieza creando uno nuevo desde las opciones superiores.</p>
+                </div>
+              ) : filteredForms.length === 0 ? (
+                <div className="col-span-full py-16 text-center">
+                  <div className="mx-auto mb-4 h-16 w-16 rounded-2xl border border-white/15 grid place-items-center">
+                    <svg className="h-8 w-8 text-primary-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+                      <circle cx="11" cy="11" r="7" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m20 20-3.6-3.6" />
+                    </svg>
+                  </div>
+                  <h3 className="text-2xl font-semibold text-white">No se encontraron formularios</h3>
+                  <p className="mt-2 text-sm text-gray-400">Prueba con otro término en el buscador.</p>
+                </div>
+              ) : (
+                filteredForms.map((form) => (
+                  (() => {
+                    const modeMeta = getFormModeMeta(form.form_mode);
+                    const publishMeta = getPublishStatusMeta(form.status);
+                    const isQuiz = String(form.form_mode || '').toLowerCase() === 'quiz';
+                    const isStrict = String(form.form_mode || '').toLowerCase() === 'strict';
+                    const isNormal = String(form.form_mode || 'normal').toLowerCase() === 'normal';
+                    return (
+                      <article
+                        key={form.id}
+                        className="relative flex h-full cursor-pointer flex-col overflow-visible rounded-lg border border-white/12 bg-white/5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-xl"
+                        onClick={() => navigate(`/form/${form.public_id}/edit`)}
+                      >
+                        <button
+                          className="w-full text-left"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            navigate(`/form/${form.public_id}/edit`);
+                          }}
+                        >
+                          <div className="relative h-32 border-b border-white/8 px-3 pt-3 pb-2">
+                            <span className={`absolute right-5 top-4 z-10 inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${modeMeta.className}`}>
+                              {modeMeta.label}
+                            </span>
+                            <FormCardThumbnail
+                              formMode={form.form_mode}
+                              previewQuestions={form.previewQuestions || []}
+                              formTheme={form.theme}
+                              formTitle={form.title}
+                              formDescription={form.description}
+                            />
+                          </div>
+                        </button>
+
+                        <div className="flex-1 px-4 pt-2 pb-2">
+                          <div className="mb-2 flex flex-wrap items-center gap-2">
+                            <span className={`inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide ${publishMeta.isPublished ? 'px-0 py-0' : 'rounded-full px-2.5 py-1'} ${publishMeta.className}`}>
+                              {publishMeta.isPublished ? <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-300" /> : null}
+                              {!publishMeta.isPublished ? <PencilIcon className="h-3 w-3" /> : null}
+                              {publishMeta.label}
+                            </span>
+                            {!isQuiz ? (
+                              <div className="ml-auto flex items-center gap-2">
+                                {isStrict ? (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      navigate(`/form/${form.public_id}/strict-control`);
+                                    }}
+                                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-amber-300/35 px-2.5 py-1 text-xs font-semibold text-amber-200 transition hover:bg-amber-500/10"
+                                    title="Panel de control estricto"
+                                  >
+                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                      <rect x="3" y="3" width="7" height="7" rx="1" />
+                                      <rect x="14" y="3" width="7" height="4" rx="1" />
+                                      <rect x="14" y="10" width="7" height="11" rx="1" />
+                                      <rect x="3" y="12" width="7" height="9" rx="1" />
+                                    </svg>
+                                    Dashboard
+                                  </button>
+                                ) : null}
+
+                                {isNormal ? (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      navigate(`/form/${form.public_id}/respuestas`);
+                                    }}
+                                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-blue-300/35 px-2.5 py-1 text-xs font-semibold text-blue-200 transition hover:bg-blue-500/10"
+                                  >
+                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                      <path d="M3 5h18" />
+                                      <path d="M3 12h18" />
+                                      <path d="M3 19h18" />
+                                    </svg>
+                                    Respuestas
+                                  </button>
+                                ) : null}
+
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    window.open(`/formulario/${form.public_id}`, '_blank');
+                                  }}
+                                  className="inline-flex cursor-pointer h-7 w-7 items-center justify-center rounded-md border border-gray-300/35 text-gray-200 transition hover:bg-gray-500/10"
+                                  aria-label="Abrir enlace publico"
+                                  title="Abrir enlace publico"
+                                >
+                                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                    <path d="M10 13a5 5 0 0 0 7.54.54l2.12-2.12a5 5 0 1 0-7.07-7.07L11.4 5.52" />
+                                    <path d="M14 11a5 5 0 0 0-7.54-.54L4.34 12.58a5 5 0 0 0 7.07 7.07l1.17-1.17" />
+                                  </svg>
+                                </button>
+                              </div>
+                            ) : null}
+                            {isQuiz ? (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  navigate(`/form/${form.public_id}/quiz-control`);
+                                }}
+                                className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-blue-300/35 px-2.5 py-1 text-xs font-semibold text-blue-200 transition hover:bg-blue-500/10"
+                              >
+                                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  <rect x="3" y="11" width="4" height="10" rx="1" />
+                                  <rect x="10" y="7" width="4" height="14" rx="1" />
+                                  <rect x="17" y="3" width="4" height="18" rx="1" />
+                                </svg>
+                                Panel de control
+                              </button>
+                            ) : null}
+                          </div>
+                          <h3 className="text-[19px] leading-6 font-medium text-white truncate">{form.title || 'Formulario sin título'}</h3>
+                        </div>
+
+                        <div className="relative mt-auto flex items-center justify-between border-t border-white/8 px-4 py-3" ref={openMenuFormId === form.id ? menuRef : null}>
+                          <div className="flex items-center gap-1.5 text-xs text-gray-300">
+                            <svg className="h-3.5 w-3.5 text-blue-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                              <line x1="16" y1="2" x2="16" y2="6" />
+                              <line x1="8" y1="2" x2="8" y2="6" />
+                              <line x1="3" y1="10" x2="21" y2="10" />
+                            </svg>
+                            <span>Creado {formatHumanDate(form.created_at)}</span>
+                          </div>
 
                           <button
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
-                              window.open(`/formulario/${form.public_id}`, '_blank');
+                              setOpenMenuFormId((prev) => (prev === form.id ? null : form.id));
                             }}
-                            className="inline-flex cursor-pointer h-7 w-7 items-center justify-center rounded-md border border-gray-300/35 text-gray-200 transition hover:bg-gray-500/10"
-                            aria-label="Abrir enlace publico"
-                            title="Abrir enlace publico"
+                            className="h-8 w-8 rounded-full grid place-items-center hover:bg-white/10 text-gray-400"
+                            aria-label="Opciones"
                           >
-                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                              <path d="M10 13a5 5 0 0 0 7.54.54l2.12-2.12a5 5 0 1 0-7.07-7.07L11.4 5.52" />
-                              <path d="M14 11a5 5 0 0 0-7.54-.54L4.34 12.58a5 5 0 0 0 7.07 7.07l1.17-1.17" />
-                            </svg>
+                            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="12" cy="19" r="2" /></svg>
                           </button>
+
+                          {openMenuFormId === form.id ? (
+                            <div className="absolute right-2 top-11 z-20 w-44 rounded-lg border border-white/10 bg-[#10141d] shadow-2xl p-1">
+                              {isStrict ? (
+                                <button
+                                  className="w-full text-left px-3 py-2 text-sm rounded text-blue-300 hover:bg-blue-500/10"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    navigate(`/form/${form.public_id}/respuestas`);
+                                    setOpenMenuFormId(null);
+                                  }}
+                                >
+                                  Respuestas
+                                </button>
+                              ) : null}
+                              <button
+                                className="w-full text-left px-3 py-2 text-sm rounded text-red-400 hover:bg-red-500/10"
+                                onClick={async (event) => {
+                                  event.stopPropagation();
+                                  if (window.confirm('¿Seguro que deseas eliminar este formulario? Esta acción no se puede deshacer.')) {
+                                    try {
+                                      await deleteForm(form.id).unwrap();
+                                      setOpenMenuFormId(null);
+                                    } catch (error) {
+                                      alert('Error al eliminar: ' + (error?.data || error?.message || 'Error desconocido'));
+                                    }
+                                  }
+                                }}
+                              >
+                                Eliminar
+                              </button>
+                            </div>
+                          ) : null}
                         </div>
-                      ) : null}
-                      {isQuiz ? (
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            navigate(`/form/${form.public_id}/quiz-control`);
-                          }}
-                          className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-blue-300/35 px-2.5 py-1 text-xs font-semibold text-blue-200 transition hover:bg-blue-500/10"
-                        >
-                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                            <rect x="3" y="11" width="4" height="10" rx="1" />
-                            <rect x="10" y="7" width="4" height="14" rx="1" />
-                            <rect x="17" y="3" width="4" height="18" rx="1" />
-                          </svg>
-                          Panel de control
-                        </button>
-                      ) : null}
-                    </div>
-                    <h3 className="text-[19px] leading-6 font-medium text-white truncate">{form.title || 'Formulario sin título'}</h3>
-                  </div>
-
-                  <div className="relative mt-auto flex items-center justify-between border-t border-white/8 px-4 py-3" ref={openMenuFormId === form.id ? menuRef : null}>
-                    <div className="flex items-center gap-1.5 text-xs text-gray-300">
-                      <svg className="h-3.5 w-3.5 text-blue-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                        <line x1="16" y1="2" x2="16" y2="6" />
-                        <line x1="8" y1="2" x2="8" y2="6" />
-                        <line x1="3" y1="10" x2="21" y2="10" />
-                      </svg>
-                      <span>Creado {formatHumanDate(form.created_at)}</span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setOpenMenuFormId((prev) => (prev === form.id ? null : form.id));
-                      }}
-                      className="h-8 w-8 rounded-full grid place-items-center hover:bg-white/10 text-gray-400"
-                      aria-label="Opciones"
-                    >
-                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="12" cy="19" r="2" /></svg>
-                    </button>
-
-                    {openMenuFormId === form.id ? (
-                      <div className="absolute right-2 top-11 z-20 w-44 rounded-lg border border-white/10 bg-[#10141d] shadow-2xl p-1">
-                        {isStrict ? (
-                          <button
-                            className="w-full text-left px-3 py-2 text-sm rounded text-blue-300 hover:bg-blue-500/10"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              navigate(`/form/${form.public_id}/respuestas`);
-                              setOpenMenuFormId(null);
-                            }}
-                          >
-                            Respuestas
-                          </button>
-                        ) : null}
-                        <button
-                          className="w-full text-left px-3 py-2 text-sm rounded text-red-400 hover:bg-red-500/10"
-                          onClick={async (event) => {
-                            event.stopPropagation();
-                            if (window.confirm('¿Seguro que deseas eliminar este formulario? Esta acción no se puede deshacer.')) {
-                              try {
-                                await deleteForm(form.id).unwrap();
-                                setOpenMenuFormId(null);
-                              } catch (error) {
-                                alert('Error al eliminar: ' + (error?.data || error?.message || 'Error desconocido'));
-                              }
-                            }
-                          }}
-                        >
-                          Eliminar
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                </article>
-                  );
-                })()
-              ))
-            )}
-          </div>
-        )}
+                      </article>
+                    );
+                  })()
+                ))
+              )}
+            </div>
+          )}
         </div>
 
       </div>

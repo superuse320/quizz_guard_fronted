@@ -3,7 +3,7 @@ import { getPreviewComponent } from '../QuestionTypes/index.jsx'
 import { normalizeFormPayload } from '../../utils/formTemplateLoader'
 import { useGenerateQuizMutation, useRegenerateQuestionMutation } from '../../redux/services/quizGeneratorApi'
 import GenerateAiIcon from '../../assets/icons/GenerateAiIcon.jsx'
-
+import { CloseIcon } from '../../assets/icons/CloseIcon.jsx'
 export default function AiGenerateModal({
     isOpen,
     accessToken,
@@ -228,7 +228,7 @@ export default function AiGenerateModal({
     }
 
     return (
-        <div className="fixed inset-0 z-50 bg-black/85 p-2 sm:p-4">
+        <div className="fixed inset-0 z-50 bg-black/55 p-2 sm:p-4 backdrop-blur-md">
             <div className="mx-auto h-[88vh] w-full max-w-330 rounded-2xl border border-white/15 mt-10 bg-black p-4 shadow-2xl">
                 <div className="mb-3 flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -240,7 +240,7 @@ export default function AiGenerateModal({
                         className="rounded-full p-1.5 text-gray-300 hover:bg-white/10"
                         onClick={handleClose}
                     >
-                        ✕
+                        <CloseIcon className={"size-4"} />
                     </button>
                 </div>
 
@@ -387,7 +387,7 @@ export default function AiGenerateModal({
             </div>
 
             {showRegenPopup ? (
-                <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/55 p-4">
+                <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
                     <div className="w-full overflow-hidden relative max-w-xl rounded-xl border border-white/15 bg-black p-5 shadow-2xl">
                         <div className='pointer-events-none select-none absolute top-0 left-0 w-full h-full z-0'>
                             <div className='absolute left-1/2 -translate-x-1/2 -top-25 bg-white size-40 rounded-full shadow-2xl shadow-white blur-[140px] opacity-60'></div>
